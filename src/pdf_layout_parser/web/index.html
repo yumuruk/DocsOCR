@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PDF Layout Parser</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>PDF Layout Parser</h1>
+        <p>레이아웃 탐지, 선택 OCR, 어노테이션 export 프로토타입</p>
+      </div>
+      <div id="statusBadge" class="status-badge">Ready</div>
+    </header>
+
+    <main class="app-shell">
+      <aside class="side-panel">
+        <form id="parseForm" class="panel-section">
+          <h2>Parse</h2>
+
+          <label class="field">
+            <span>PDF 파일</span>
+            <input id="pdfFile" type="file" accept="application/pdf" required />
+          </label>
+
+          <div class="field-grid">
+            <label class="field">
+              <span>Detector</span>
+              <select id="detector">
+                <option value="heuristic">heuristic</option>
+                <option value="doclayout-yolo">doclayout-yolo</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>Max pages</span>
+              <input id="maxPages" type="number" min="1" max="300" placeholder="3" />
+            </label>
+          </div>
+
+          <label class="field">
+            <span>Model path</span>
+            <input id="modelPath" type="text" placeholder="./models/best.pt" />
+          </label>
+
+          <div class="toggle-row">
+            <label>
+              <input id="runOcr" type="checkbox" checked />
+              OCR 실행
+            </label>
+            <label>
+              <input id="drawMode" type="checkbox" checked />
+              어노테이션 드래그
+            </label>
+          </div>
+
+          <button class="primary-button" type="submit">Run parse</button>
+        </form>
+
+        <section class="panel-section">
+          <h2>Annotation</h2>
+          <label class="field">
+            <span>Label</span>
+            <select id="labelSelect">
+              <option value="title">title</option>
+              <option value="body">body</option>
+              <option value="table">table</option>
+              <option value="figure">figure</option>
+              <option value="header">header</option>
+              <option value="footer">footer</option>
+              <option value="ignore">ignore</option>
+              <option value="target_data">target_data</option>
+            </select>
+          </label>
+
+          <div class="button-row">
+            <button id="exportAnnotations" type="button">Export JSON</button>
+            <button id="clearAnnotations" type="button">Clear</button>
+          </div>
+          <p id="annotationCount" class="muted">0 annotations</p>
+        </section>
+
+        <section class="panel-section">
+          <h2>Output</h2>
+          <div id="outputLinks" class="output-links muted">파싱 후 결과 링크가 표시됩니다.</div>
+        </section>
+      </aside>
+
+      <section class="workspace">
+        <div id="emptyState" class="empty-state">
+          <strong>PDF를 업로드하면 페이지와 탐지 박스가 여기에 표시됩니다.</strong>
+          <span>어노테이션 모드가 켜진 상태에서 페이지 위를 드래그하면 라벨 박스를 추가할 수 있습니다.</span>
+        </div>
+        <div id="pages" class="pages"></div>
+      </section>
+    </main>
+
+    <template id="pageTemplate">
+      <article class="page-card">
+        <div class="page-header">
+          <h3></h3>
+          <span class="page-meta"></span>
+        </div>
+        <div class="page-layout">
+          <div class="page-canvas">
+            <img alt="PDF page" />
+            <svg class="overlay"></svg>
+          </div>
+          <div class="region-list"></div>
+        </div>
+      </article>
+    </template>
+
+    <script src="/assets/app.js"></script>
+  </body>
+</html>
+

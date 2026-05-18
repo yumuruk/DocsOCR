@@ -1,0 +1,10 @@
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.6
+pillow>=10.0
+python-multipart>=0.0.9
+
+# Optional runtime dependencies:
+# pymupdf>=1.24
+# pytesseract>=0.3.10
+# doclayout-yolo>=0.0.3

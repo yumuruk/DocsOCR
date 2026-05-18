@@ -1,0 +1,210 @@
+from __future__ import annotations
+
+from enum import Enum
+from pathlib import Path
+from typing import Any, Literal
+from uuid import uuid4
+
+from pydantic import BaseModel, Field, computed_field
+
+
+class ExtractionAction(str, Enum):
+    OCR = "ocr"
+    TABLE = "table"
+    SKIP = "skip"
+    NATIVE_TEXT = "native_text"
+
+
+class BoundingBox(BaseModel):
+    x: float
+    y: float
+    width: float
+    height: float
+
+    @computed_field
+    @property
+    def x2(self) -> float:
+        return self.x + self.width
+
+    @computed_field
+    @property
+    def y2(self) -> float:
+        return self.y + self.height
+
+    @classmethod
+    def from_xyxy(cls, x1: float, y1: float, x2: float, y2: float) -> "BoundingBox":
+        return cls(x=x1, y=y1, width=max(0.0, x2 - x1), height=max(0.0, y2 - y1))
+
+    def to_xyxy(self) -> tuple[float, float, float, float]:
+        return self.x, self.y, self.x2, self.y2
+
+    def area(self) -> float:
+        return max(0.0, self.width) * max(0.0, self.height)
+
+    def intersects(self, other: "BoundingBox", min_overlap_ratio: float = 0.1) -> bool:
+        x1 = max(self.x, other.x)
+        y1 = max(self.y, other.y)
+        x2 = min(self.x2, other.x2)
+        y2 = min(self.y2, other.y2)
+        intersection = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+        if intersection <= 0:
+            return False
+        smaller = min(self.area(), other.area())
+        if smaller <= 0:
+            return False
+        return intersection / smaller >= min_overlap_ratio
+
+    def clamp(self, width: int, height: int) -> "BoundingBox":
+        x1 = min(max(self.x, 0), width)
+        y1 = min(max(self.y, 0), height)
+        x2 = min(max(self.x2, 0), width)
+        y2 = min(max(self.y2, 0), height)
+        return BoundingBox.from_xyxy(x1, y1, x2, y2)
+
+
+class LabelPolicy(BaseModel):
+    label: str
+    action: ExtractionAction
+    description: str = ""
+
+
+DEFAULT_LABEL_POLICIES: dict[str, LabelPolicy] = {
+    "title": LabelPolicy(label="title", action=ExtractionAction.OCR, description="Heading/title region"),
+    "body": LabelPolicy(label="body", action=ExtractionAction.OCR, description="Main body text"),
+    "plain text": LabelPolicy(label="plain text", action=ExtractionAction.OCR, description="Generic text region"),
+    "text": LabelPolicy(label="text", action=ExtractionAction.OCR, description="Generic text region"),
+    "table": LabelPolicy(label="table", action=ExtractionAction.TABLE, description="Table region"),
+    "figure": LabelPolicy(label="figure", action=ExtractionAction.SKIP, description="Figure/image region"),
+    "image": LabelPolicy(label="image", action=ExtractionAction.SKIP, description="Image region"),
+    "header": LabelPolicy(label="header", action=ExtractionAction.SKIP, description="Repeating header"),
+    "footer": LabelPolicy(label="footer", action=ExtractionAction.SKIP, description="Repeating footer"),
+    "ignore": LabelPolicy(label="ignore", action=ExtractionAction.SKIP, description="Explicitly ignored region"),
+    "target_data": LabelPolicy(label="target_data", action=ExtractionAction.OCR, description="High priority target data"),
+}
+
+
+class DetectedRegion(BaseModel):
+    label: str
+    bbox: BoundingBox
+    confidence: float = 0.0
+    source: str = "unknown"
+    raw_label_id: int | None = None
+
+
+class ParsedRegion(BaseModel):
+    region_id: str = Field(default_factory=lambda: str(uuid4()))
+    page_number: int
+    label: str
+    bbox: BoundingBox
+    confidence: float
+    action: ExtractionAction
+    source: str
+    text: str = ""
+    table_data: list[list[str]] | None = None
+    notes: list[str] = Field(default_factory=list)
+
+
+class PageParseResult(BaseModel):
+    page_number: int
+    image_path: str
+    width: int
+    height: int
+    regions: list[ParsedRegion] = Field(default_factory=list)
+
+
+class DocumentParseResult(BaseModel):
+    document_id: str = Field(default_factory=lambda: str(uuid4()))
+    input_path: str
+    output_dir: str
+    detector: str
+    model_path: str | None = None
+    pages: list[PageParseResult] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class AnnotationBox(BaseModel):
+    label: str
+    bbox: BoundingBox
+
+
+class AnnotationPage(BaseModel):
+    image_path: str
+    width: int
+    height: int
+    annotations: list[AnnotationBox] = Field(default_factory=list)
+
+
+class AnnotationDataset(BaseModel):
+    labels: list[str]
+    pages: list[AnnotationPage]
+
+
+class YoloExportResult(BaseModel):
+    output_dir: str
+    images_dir: str
+    labels_dir: str
+    train_txt: str
+    val_txt: str
+    data_yaml: str
+    labels: list[str]
+    train_count: int
+    val_count: int
+    page_count: int
+
+
+class ParseRequestOptions(BaseModel):
+    detector: Literal["heuristic", "doclayout-yolo"] = "heuristic"
+    model_path: Path | None = None
+    device: str = "cpu"
+    image_size: int = 1024
+    confidence: float = 0.25
+    dpi: int = 180
+    max_pages: int | None = None
+    run_ocr: bool = True
+    policy_overrides: dict[str, ExtractionAction] = Field(default_factory=dict)
+
+
+JsonDict = dict[str, Any]
+
+
+class TrainingConfig(BaseModel):
+    data_yaml: Path
+    output_dir: Path = Path("runs/training")
+    run_name: str = "doclayout_finetune"
+    model_size: str = "n"
+    pretrain: Path | str | None = None
+    epochs: int = 30
+    batch_size: int = 4
+    image_size: int = 1024
+    device: str = "cpu"
+    workers: int = 0
+    learning_rate: float = 0.02
+    optimizer: str = "auto"
+    momentum: float = 0.9
+    warmup_epochs: float = 3.0
+    mosaic: float = 1.0
+    run_validation: bool = True
+    plots: bool = False
+    save_period: int = 10
+    patience: int = 100
+    exist_ok: bool = True
+    dry_run: bool = False
+
+
+class TrainingResult(BaseModel):
+    status: Literal["dry_run", "completed", "failed"]
+    data_yaml: str
+    output_dir: str
+    run_name: str
+    model_source: str
+    best_model_path: str | None = None
+    last_model_path: str | None = None
+    command_preview: str
+    metrics: JsonDict = Field(default_factory=dict)
+    error: str | None = None
+
+
+class ExperimentResult(BaseModel):
+    sample_size: int
+    dataset: YoloExportResult
+    training: TrainingResult

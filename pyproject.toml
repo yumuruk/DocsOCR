@@ -1,0 +1,33 @@
+[project]
+name = "intelligent-pdf-parser-prototype"
+version = "0.1.0"
+description = "Prototype for annotation-driven PDF layout parsing with optional DocLayout-YOLO inference."
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.27",
+  "pydantic>=2.6",
+  "pillow>=10.0",
+  "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+pdf = [
+  "pymupdf>=1.24",
+]
+ocr = [
+  "pytesseract>=0.3.10",
+]
+doclayout = [
+  "doclayout-yolo>=0.0.3",
+]
+
+[project.scripts]
+pdf-layout-parser = "pdf_layout_parser.cli:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
