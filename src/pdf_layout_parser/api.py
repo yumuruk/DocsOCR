@@ -18,15 +18,22 @@ app = FastAPI(title="Intelligent PDF Parser Prototype", version="0.1.0")
 
 PACKAGE_DIR = Path(__file__).resolve().parent
 WEB_DIR = PACKAGE_DIR / "web"
+PROJECT_ROOT = PACKAGE_DIR.parents[1]
+FRONTEND_DIST = PROJECT_ROOT / "frontend" / "dist"
 RUNS_DIR = Path("runs").resolve()
 RUNS_DIR.mkdir(parents=True, exist_ok=True)
 
-app.mount("/assets", StaticFiles(directory=WEB_DIR), name="assets")
+ASSETS_DIR = FRONTEND_DIST / "assets" if (FRONTEND_DIST / "assets").exists() else WEB_DIR
+
+app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
 app.mount("/runs", StaticFiles(directory=RUNS_DIR), name="runs")
 
 
 @app.get("/")
 def index() -> FileResponse:
+    built_index = FRONTEND_DIST / "index.html"
+    if built_index.exists():
+        return FileResponse(built_index)
     return FileResponse(WEB_DIR / "index.html")
 
 

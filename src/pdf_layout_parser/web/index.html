@@ -83,6 +83,15 @@
         </section>
 
         <section class="panel-section">
+          <h2>View</h2>
+          <div class="segmented-control" aria-label="PDF preview size">
+            <button type="button" class="zoom-button active" data-zoom="fit">Fit</button>
+            <button type="button" class="zoom-button" data-zoom="0.75">75%</button>
+            <button type="button" class="zoom-button" data-zoom="1">100%</button>
+          </div>
+        </section>
+
+        <section class="panel-section">
           <h2>Output</h2>
           <div id="outputLinks" class="output-links muted">파싱 후 결과 링크가 표시됩니다.</div>
         </section>
@@ -104,9 +113,11 @@
           <span class="page-meta"></span>
         </div>
         <div class="page-layout">
-          <div class="page-canvas">
-            <img alt="PDF page" />
-            <svg class="overlay"></svg>
+          <div class="page-preview">
+            <div class="page-canvas">
+              <img alt="PDF page" />
+              <svg class="overlay"></svg>
+            </div>
           </div>
           <div class="region-list"></div>
         </div>
@@ -116,4 +127,3 @@
     <script src="/assets/app.js"></script>
   </body>
 </html>
-

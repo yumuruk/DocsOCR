@@ -1,135 +1,258 @@
-# Intelligent PDF Parsing Prototype
+# DocsOCR PDF Layout Parser
 
-사용자 어노테이션 기반 PDF 레이아웃 파싱 플랫폼의 프로토타입입니다.
+사용자 어노테이션 기반 PDF 레이아웃 파싱 프로토타입입니다.
 
-이 코드는 대화에서 언급한 [DocLayout-YOLO](https://github.com/opendatalab/DocLayout-YOLO)를 선택적으로 연결할 수 있게 만들었습니다. 모델/가중치가 없을 때도 파이프라인을 검증할 수 있도록 휴리스틱 레이아웃 탐지기를 기본값으로 제공합니다.
+이 프로젝트는 [DocLayout-YOLO](https://github.com/opendatalab/DocLayout-YOLO)를 선택적으로 연결할 수 있게 구성되어 있습니다. 모델 가중치가 없어도 기본 `heuristic` detector로 PDF 업로드, 페이지 렌더링, 영역 박스 시각화, 어노테이션 export 흐름을 확인할 수 있습니다.
 
-## 핵심 기능
+## 주요 기능
 
-- PDF 페이지 렌더링
+- PDF 업로드 및 페이지 이미지 렌더링
 - 레이아웃 영역 탐지
-- 영역 정책 기반 OCR 스킵/수행
+- 영역 정책 기반 OCR 실행/스킵
 - JSON/Markdown 결과 생성
-- 사용자 어노테이션을 YOLO 학습 포맷으로 변환
-- FastAPI 기반 최소 API
-- CLI 기반 로컬 실행
+- 페이지 위 드래그 어노테이션
+- 어노테이션 JSON export
+- YOLO 학습 데이터셋 export
+- DocLayout-YOLO fine-tuning 래퍼
+- FastAPI 백엔드
+- React + Vite + Tailwind 프론트엔드
 
-## 설치
+## 프로젝트 구조
 
-기본 API/CLI만 실행:
-
-```bash
-pip install -e .
+```text
+.
+├── src/pdf_layout_parser/      # FastAPI, PDF 파싱 파이프라인, 학습/데이터셋 코드
+├── frontend/                   # React + Vite + Tailwind 웹 UI
+├── docs/                       # 기획/요구사항 문서
+├── tests/                      # Python 테스트
+├── pyproject.toml              # Python 패키지 설정
+├── requirements.txt            # Python 기본 의존성
+└── README.md
 ```
 
-PDF 렌더링까지 사용:
+## 필수 의존성
+
+### 1. Python
+
+- Python 3.10 이상 권장
+- 현재 개발 환경에서는 `uv`로 Python 3.12 가상환경을 사용했습니다.
+
+`uv`가 있으면 아래 명령을 그대로 사용할 수 있습니다.
 
 ```bash
+uv run python --version
+```
+
+`uv` 없이 일반 Python을 사용할 수도 있습니다.
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
 pip install -e ".[pdf]"
 ```
 
-DocLayout-YOLO 추론까지 사용:
+### 2. Node.js / npm
+
+React/Vite 프론트엔드를 실행하려면 Node.js와 npm이 필요합니다.
+
+- Node.js 20 이상 권장
+- 현재 개발 환경에서는 Node.js 24 LTS를 사용했습니다.
+
+확인:
+
+```bash
+node --version
+npm --version
+```
+
+### 3. 선택 의존성
+
+DocLayout-YOLO 추론/학습을 사용하려면:
 
 ```bash
 pip install -e ".[pdf,doclayout]"
 ```
 
-OCR까지 사용하려면 `pytesseract`와 OS 레벨 Tesseract 설치가 추가로 필요합니다.
+OCR까지 사용하려면:
 
 ```bash
 pip install -e ".[pdf,ocr]"
 ```
 
-## CLI 사용
+`pytesseract`를 쓰는 경우 OS에 Tesseract OCR 설치가 추가로 필요합니다.
 
-휴리스틱 탐지기로 파이프라인 검증:
+## 처음 실행하기
+
+### 1. Python 백엔드 의존성 설치
+
+권장:
 
 ```bash
-pdf-layout-parser parse ./sample.pdf --output-dir ./runs/sample
+uv sync --extra pdf
 ```
 
-DocLayout-YOLO 가중치 사용:
+또는 pip:
 
 ```bash
-pdf-layout-parser parse ./sample.pdf \
-  --output-dir ./runs/sample \
-  --detector doclayout-yolo \
-  --model-path ./models/doclayout_yolo_docstructbench_imgsz1024.pt \
+pip install -e ".[pdf]"
+```
+
+### 2. React 프론트엔드 의존성 설치
+
+```bash
+cd frontend
+npm install
+cd ..
+```
+
+## 개발 모드 실행
+
+터미널을 2개 열어서 백엔드와 프론트엔드를 각각 실행합니다.
+
+### 터미널 1: FastAPI 백엔드
+
+```bash
+uv run uvicorn pdf_layout_parser.api:app --reload --host 127.0.0.1 --port 8000
+```
+
+또는 pip 환경:
+
+```bash
+uvicorn pdf_layout_parser.api:app --reload --host 127.0.0.1 --port 8000
+```
+
+백엔드 확인:
+
+```text
+http://127.0.0.1:8000/health
+```
+
+### 터미널 2: React/Vite 프론트엔드
+
+```bash
+cd frontend
+npm run dev
+```
+
+브라우저에서 접속:
+
+```text
+http://127.0.0.1:5173/
+```
+
+Vite dev server는 아래 요청을 FastAPI 백엔드로 프록시합니다.
+
+- `/documents`
+- `/annotations`
+- `/training`
+- `/runs`
+- `/health`
+
+## 빌드 후 FastAPI에서 서빙하기
+
+React 앱을 정적 파일로 빌드합니다.
+
+```bash
+cd frontend
+npm run build
+cd ..
+```
+
+FastAPI를 실행합니다.
+
+```bash
+uv run uvicorn pdf_layout_parser.api:app --reload --host 127.0.0.1 --port 8000
+```
+
+브라우저에서 접속:
+
+```text
+http://127.0.0.1:8000/
+```
+
+`frontend/dist`가 존재하면 FastAPI 루트(`/`)에서 React 빌드 결과를 서빙합니다. 빌드 결과가 없으면 기존 정적 HTML 프로토타입을 fallback으로 서빙합니다.
+
+## 웹 UI 사용법
+
+1. `http://127.0.0.1:5173/` 접속
+2. PDF 파일 선택
+3. Detector 선택
+   - `heuristic`: 모델 없이 기본 박스 생성
+   - `doclayout-yolo`: DocLayout-YOLO 가중치 사용
+4. 필요하면 `Max pages` 지정
+5. OCR 실행 여부 선택
+6. `Run parse` 클릭
+7. 페이지 이미지와 탐지 박스 확인
+8. label 선택 후 페이지 위에서 드래그해 어노테이션 박스 추가
+9. `Export`로 `annotations.json` 다운로드
+10. `result.json`, `result.md` 결과 확인
+
+## CLI 사용
+
+기본 heuristic detector로 파싱:
+
+```bash
+uv run pdf-layout-parser parse ./sample.pdf --output-dir ./runs/sample --no-ocr
+```
+
+DocLayout-YOLO 가중치로 파싱:
+
+```bash
+uv run pdf-layout-parser parse ./sample.pdf ^
+  --output-dir ./runs/sample ^
+  --detector doclayout-yolo ^
+  --model-path ./models/doclayout_yolo_docstructbench_imgsz1024.pt ^
   --device cuda:0
 ```
 
-어노테이션을 YOLO 포맷으로 변환:
+어노테이션 JSON을 YOLO 데이터셋으로 변환:
 
 ```bash
-pdf-layout-parser export-yolo ./annotations.json ./dataset
+uv run pdf-layout-parser export-yolo ./annotations.json ./dataset
 ```
 
-10/20페이지 기준 실험 데이터셋과 학습 설정 생성:
+10/20페이지 기준 실험 데이터셋과 학습 preview 생성:
 
 ```bash
-pdf-layout-parser experiment ./annotations.json ./runs/manual-exp \
-  --sample-sizes 10,20 \
-  --pretrain ./models/doclayout_yolo_docstructbench_imgsz1024.pt \
+uv run pdf-layout-parser experiment ./annotations.json ./runs/manual-exp ^
+  --sample-sizes 10,20 ^
+  --pretrain ./models/doclayout_yolo_docstructbench_imgsz1024.pt ^
   --dry-run
 ```
 
 실제 fine-tuning 실행:
 
 ```bash
-pdf-layout-parser train ./annotations.json ./runs/manual-train \
-  --max-pages 20 \
-  --pretrain ./models/doclayout_yolo_docstructbench_imgsz1024.pt \
-  --epochs 50 \
-  --batch-size 4 \
+uv run pdf-layout-parser train ./annotations.json ./runs/manual-train ^
+  --max-pages 20 ^
+  --pretrain ./models/doclayout_yolo_docstructbench_imgsz1024.pt ^
+  --epochs 50 ^
+  --batch-size 4 ^
   --device cuda:0
 ```
 
 학습된 모델로 다시 파싱:
 
 ```bash
-pdf-layout-parser parse ./sample.pdf \
-  --output-dir ./runs/manual-parse \
-  --detector doclayout-yolo \
-  --model-path ./runs/manual-train/training/doclayout_finetune/weights/best.pt \
+uv run pdf-layout-parser parse ./sample.pdf ^
+  --output-dir ./runs/manual-parse ^
+  --detector doclayout-yolo ^
+  --model-path ./runs/manual-train/training/doclayout_finetune/weights/best.pt ^
   --device cuda:0
 ```
 
-## API 실행
-
-```bash
-uvicorn pdf_layout_parser.api:app --reload --port 8000
-```
-
-웹 UI:
-
-```bash
-uvicorn pdf_layout_parser.api:app --reload --port 8000
-```
-
-브라우저에서 엽니다.
-
-```text
-http://127.0.0.1:8000/
-```
-
-웹에서 가능한 기본 기능:
-
-- PDF 업로드
-- Heuristic / DocLayout-YOLO detector 선택
-- Max page 제한
-- OCR 실행 여부 선택
-- 페이지 이미지와 탐지 박스 확인
-- 영역별 action/text/notes 확인
-- 페이지 위 드래그로 어노테이션 박스 추가
-- 어노테이션 JSON 다운로드
-- `result.json`, `result.md` 확인
-
-엔드포인트:
+## API 엔드포인트
 
 - `GET /health`
 - `POST /documents/parse`
 - `POST /annotations/export-yolo`
 - `POST /training/fine-tune`
+
+FastAPI Swagger 문서:
+
+```text
+http://127.0.0.1:8000/docs
+```
 
 ## 어노테이션 JSON 예시
 
@@ -144,7 +267,12 @@ http://127.0.0.1:8000/
       "annotations": [
         {
           "label": "title",
-          "bbox": {"x": 100, "y": 80, "width": 900, "height": 120}
+          "bbox": {
+            "x": 100,
+            "y": 80,
+            "width": 900,
+            "height": 120
+          }
         }
       ]
     }
@@ -152,20 +280,34 @@ http://127.0.0.1:8000/
 }
 ```
 
-## 프로토타입 한계
+## 테스트 및 검증
 
-- 실제 성능 검증은 샘플 PDF와 어노테이션 데이터가 필요합니다.
-- DocLayout-YOLO 가중치는 별도로 다운로드해야 합니다.
-- 현재 API는 MVP 검증용 동기 실행에 가깝습니다. 운영 환경에서는 큐/워커 구조로 분리해야 합니다.
+Python 테스트:
 
-## Fine-tuning 루프
+```bash
+uv run python -m unittest discover tests
+```
 
-현재 구현된 루프는 다음과 같습니다.
+프론트엔드 빌드:
 
-1. PDF 페이지 이미지를 준비합니다.
-2. 어노테이션 JSON에 이미지 경로, 페이지 크기, 라벨 박스를 저장합니다.
-3. `export-yolo` 또는 `train` 명령으로 YOLO dataset을 생성합니다.
-4. `train` 명령이 `doclayout_yolo.YOLOv10(...).train(...)`을 호출합니다.
-5. 생성된 `best.pt`를 `parse --detector doclayout-yolo --model-path ...`에 넘깁니다.
+```bash
+cd frontend
+npm run build
+```
 
-`experiment` 명령은 `10,20,50`처럼 페이지 수별 데이터셋과 학습 실행을 나눠 만들기 위한 명령입니다. 기본은 데이터셋과 학습 preview만 만들고, 실제 학습까지 돌리려면 `--train`을 추가합니다.
+현재 검증된 명령:
+
+```bash
+uv run python -m unittest discover tests
+cd frontend
+npm install
+npm run build
+```
+
+## 참고 사항
+
+- `runs/`, `.venv/`, `.uv-cache/`, `.uv-python/`, `frontend/node_modules/`, `frontend/dist/`는 git에 포함하지 않습니다.
+- 실제 DocLayout-YOLO 사용을 위해서는 별도 가중치 파일이 필요합니다.
+- 현재 API는 MVP 검증용 동기 실행 구조에 가깝습니다. 운영 환경에서는 job queue/worker 구조로 분리하는 것이 좋습니다.
+- OCR 품질은 PDF 유형, 이미지 해상도, OCR 엔진 설치 여부에 따라 달라집니다.
+

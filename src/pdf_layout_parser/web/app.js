@@ -7,11 +7,13 @@ const outputLinks = document.querySelector("#outputLinks");
 const annotationCount = document.querySelector("#annotationCount");
 const exportAnnotationsBtn = document.querySelector("#exportAnnotations");
 const clearAnnotationsBtn = document.querySelector("#clearAnnotations");
+const zoomButtons = document.querySelectorAll(".zoom-button");
 
 const state = {
   result: null,
   annotations: [],
   drawing: null,
+  zoom: "fit",
 };
 
 const colors = {
@@ -105,6 +107,14 @@ clearAnnotationsBtn.addEventListener("click", () => {
   renderResult();
 });
 
+zoomButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    state.zoom = button.dataset.zoom;
+    zoomButtons.forEach((item) => item.classList.toggle("active", item === button));
+    applyZoom();
+  });
+});
+
 function renderResult() {
   pagesEl.replaceChildren();
   emptyState.style.display = state.result ? "none" : "grid";
@@ -118,6 +128,7 @@ function renderResult() {
     const article = pageNode.querySelector(".page-card");
     const heading = pageNode.querySelector("h3");
     const meta = pageNode.querySelector(".page-meta");
+    const pageCanvas = pageNode.querySelector(".page-canvas");
     const image = pageNode.querySelector("img");
     const overlay = pageNode.querySelector(".overlay");
     const regionList = pageNode.querySelector(".region-list");
@@ -129,6 +140,7 @@ function renderResult() {
     image.alt = `Page ${page.page_number}`;
     overlay.setAttribute("viewBox", `0 0 ${page.width} ${page.height}`);
     overlay.dataset.pageNumber = page.page_number;
+    pageCanvas.style.setProperty("--page-display-width", `${displayWidthForPage(page)}px`);
 
     renderOverlay(overlay, page);
     bindAnnotationDrawing(overlay, page);
@@ -136,6 +148,25 @@ function renderResult() {
 
     pagesEl.appendChild(pageNode);
   }
+}
+
+function applyZoom() {
+  if (!state.result) return;
+  document.querySelectorAll(".page-card").forEach((article) => {
+    const pageNumber = Number(article.dataset.pageNumber);
+    const page = state.result.pages.find((item) => item.page_number === pageNumber);
+    if (!page) return;
+    article
+      .querySelector(".page-canvas")
+      .style.setProperty("--page-display-width", `${displayWidthForPage(page)}px`);
+  });
+}
+
+function displayWidthForPage(page) {
+  if (state.zoom === "fit") {
+    return Math.min(page.width, 680);
+  }
+  return Math.max(320, page.width * Number(state.zoom || 1));
 }
 
 function renderOverlay(svg, page) {
@@ -333,4 +364,3 @@ function downloadJson(filename, data) {
   link.click();
   URL.revokeObjectURL(url);
 }
-
