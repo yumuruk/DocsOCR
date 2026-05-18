@@ -21,14 +21,34 @@
 
 ```text
 .
-├── src/pdf_layout_parser/      # FastAPI, PDF 파싱 파이프라인, 학습/데이터셋 코드
 ├── frontend/                   # React + Vite + Tailwind 웹 UI
+├── backend/                    # FastAPI 백엔드 서버
+├── src/pdf_layout_parser/      # OCR/레이아웃 핵심 Python 모듈
 ├── docs/                       # 기획/요구사항 문서
 ├── tests/                      # Python 테스트
 ├── pyproject.toml              # Python 패키지 설정
 ├── requirements.txt            # Python 기본 의존성
 └── README.md
 ```
+
+핵심 위치는 아래처럼 보면 됩니다.
+
+| 영역 | 위치 | 역할 |
+| --- | --- | --- |
+| Frontend | `frontend/` | React UI, PDF 업로드 화면, 박스 시각화, 어노테이션 export |
+| Backend | `backend/main.py` | FastAPI API 서버, 파일 업로드, 파싱 요청, 결과 파일 서빙 |
+| Python core module | `src/pdf_layout_parser/` | PDF 렌더링, 레이아웃 탐지, OCR, 후처리, YOLO export/fine-tuning |
+
+Python core module 안의 주요 파일:
+
+- `pipeline.py`: PDF 파싱 전체 파이프라인
+- `pdf.py`: PDF 페이지 렌더링 및 native text 추출
+- `detectors.py`: heuristic detector 및 DocLayout-YOLO detector adapter
+- `ocr.py`: OCR 실행 adapter
+- `dataset.py`: 어노테이션 JSON -> YOLO dataset 변환
+- `training.py`: DocLayout-YOLO fine-tuning wrapper
+- `models.py`: 공통 데이터 모델
+- `core/__init__.py`: 핵심 파이프라인 import facade
 
 ## 필수 의존성
 
@@ -112,13 +132,13 @@ cd ..
 ### 터미널 1: FastAPI 백엔드
 
 ```bash
-uv run uvicorn pdf_layout_parser.api:app --reload --host 127.0.0.1 --port 8000
+uv run uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 또는 pip 환경:
 
 ```bash
-uvicorn pdf_layout_parser.api:app --reload --host 127.0.0.1 --port 8000
+uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 백엔드 확인:
@@ -161,7 +181,7 @@ cd ..
 FastAPI를 실행합니다.
 
 ```bash
-uv run uvicorn pdf_layout_parser.api:app --reload --host 127.0.0.1 --port 8000
+uv run uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 브라우저에서 접속:
@@ -310,4 +330,3 @@ npm run build
 - 실제 DocLayout-YOLO 사용을 위해서는 별도 가중치 파일이 필요합니다.
 - 현재 API는 MVP 검증용 동기 실행 구조에 가깝습니다. 운영 환경에서는 job queue/worker 구조로 분리하는 것이 좋습니다.
 - OCR 품질은 PDF 유형, 이미지 해상도, OCR 엔진 설치 여부에 따라 달라집니다.
-
