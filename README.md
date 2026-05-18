@@ -1,5 +1,58 @@
 # DocsOCR PDF Layout Parser
 
+## Quick Start: 처음 실행
+
+아래 명령은 GitHub repo 이름과 동일한 로컬 폴더 `DocsOCR` 기준입니다.
+
+```powershell
+cd "C:\Users\taeil\Projects\DocsOCR"
+```
+
+### 1. 처음 한 번만 설치
+
+```powershell
+uv sync --extra pdf --extra doclayout
+cd frontend
+npm install
+cd ..
+```
+
+
+### DocStructBench 기본 모델 배치
+
+DocLayout-YOLO의 DocStructBench fine-tuned 모델은 레포에 커밋하지 않고 로컬 `models/` 폴더에 둡니다.
+
+```powershell
+mkdir models
+copy "C:\Users\taeil\Downloads\doclayout_yolo_docstructbench_imgsz1024.pt" "models\doclayout_yolo_docstructbench_imgsz1024.pt"
+```
+
+웹 UI의 기본 detector는 `doclayout-yolo`이고, 기본 model path는 아래 파일입니다.
+
+```text
+models/doclayout_yolo_docstructbench_imgsz1024.pt
+```
+### 2. 터미널 1: 백엔드 실행
+
+반드시 프로젝트 루트에서 실행해야 합니다. `frontend` 폴더 안에서 실행하면 `No module named 'backend'` 오류가 납니다.
+
+```powershell
+uv run uvicorn backend.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+### 3. 터미널 2: 프론트엔드 실행
+
+```powershell
+cd frontend
+npm run dev
+```
+
+### 4. 브라우저 접속
+
+```text
+http://127.0.0.1:5173/
+```
+
 사용자 어노테이션 기반 PDF 레이아웃 파싱 프로토타입입니다.
 
 이 프로젝트는 [DocLayout-YOLO](https://github.com/opendatalab/DocLayout-YOLO)를 선택적으로 연결할 수 있게 구성되어 있습니다. 모델 가중치가 없어도 기본 `heuristic` detector로 PDF 업로드, 페이지 렌더링, 영역 박스 시각화, 어노테이션 export 흐름을 확인할 수 있습니다.
@@ -108,7 +161,7 @@ pip install -e ".[pdf,ocr]"
 권장:
 
 ```bash
-uv sync --extra pdf
+uv sync --extra pdf --extra doclayout
 ```
 
 또는 pip:
@@ -330,3 +383,4 @@ npm run build
 - 실제 DocLayout-YOLO 사용을 위해서는 별도 가중치 파일이 필요합니다.
 - 현재 API는 MVP 검증용 동기 실행 구조에 가깝습니다. 운영 환경에서는 job queue/worker 구조로 분리하는 것이 좋습니다.
 - OCR 품질은 PDF 유형, 이미지 해상도, OCR 엔진 설치 여부에 따라 달라집니다.
+

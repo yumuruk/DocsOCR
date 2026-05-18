@@ -1,8 +1,8 @@
 [project]
-name = "intelligent-pdf-parser-prototype"
+name = "docsocr"
 version = "0.1.0"
-description = "Prototype for annotation-driven PDF layout parsing with optional DocLayout-YOLO inference."
-requires-python = ">=3.10"
+description = "DocsOCR prototype for annotation-driven PDF layout parsing with optional DocLayout-YOLO inference."
+requires-python = ">=3.10,<3.14"
 dependencies = [
   "fastapi>=0.110",
   "uvicorn[standard]>=0.27",
@@ -20,6 +20,7 @@ ocr = [
 ]
 doclayout = [
   "doclayout-yolo>=0.0.3",
+  "huggingface-hub>=0.23",
 ]
 
 [project.scripts]
@@ -31,3 +32,4 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+

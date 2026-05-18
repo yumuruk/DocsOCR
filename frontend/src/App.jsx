@@ -4,7 +4,6 @@ import {
   Eraser,
   FileText,
   Loader2,
-  Maximize2,
   Play,
   ScanLine,
 } from "lucide-react";
@@ -36,6 +35,8 @@ const COLORS = {
   manual: "#111827",
 };
 
+const DEFAULT_DOCLAYOUT_MODEL = "models/doclayout_yolo_docstructbench_imgsz1024.pt";
+
 const ZOOM_OPTIONS = [
   { label: "Fit", value: "fit" },
   { label: "75%", value: "0.75" },
@@ -44,9 +45,9 @@ const ZOOM_OPTIONS = [
 
 export default function App() {
   const [file, setFile] = useState(null);
-  const [detector, setDetector] = useState("heuristic");
+  const [detector, setDetector] = useState("doclayout-yolo");
   const [maxPages, setMaxPages] = useState("3");
-  const [modelPath, setModelPath] = useState("");
+  const [modelPath, setModelPath] = useState(DEFAULT_DOCLAYOUT_MODEL);
   const [runOcr, setRunOcr] = useState(true);
   const [drawMode, setDrawMode] = useState(true);
   const [selectedLabel, setSelectedLabel] = useState("target_data");
@@ -56,6 +57,7 @@ export default function App() {
   const [annotations, setAnnotations] = useState([]);
   const [drawing, setDrawing] = useState(null);
   const [error, setError] = useState("");
+  const isParsing = status.tone === "busy";
 
   const annotationPayload = useMemo(() => {
     if (!result) return null;
@@ -170,7 +172,13 @@ export default function App() {
                   className="input"
                   type="file"
                   accept="application/pdf"
-                  onChange={(event) => setFile(event.target.files?.[0] || null)}
+                  onChange={(event) => {
+                    setFile(event.target.files?.[0] || null);
+                    setResult(null);
+                    setAnnotations([]);
+                    setError("");
+                    setStatus({ label: "Ready", tone: "idle" });
+                  }}
                   required
                 />
               </Field>
@@ -199,10 +207,11 @@ export default function App() {
                 <input
                   className="input"
                   value={modelPath}
-                  placeholder="./models/best.pt"
+                  placeholder={DEFAULT_DOCLAYOUT_MODEL}
                   onChange={(event) => setModelPath(event.target.value)}
                 />
               </Field>
+              <p className="-mt-2 text-xs leading-5 text-slate-500">Local default: <code>models/doclayout_yolo_docstructbench_imgsz1024.pt</code></p>
 
               <div className="grid grid-cols-2 gap-2">
                 <Toggle checked={runOcr} label="OCR" onChange={setRunOcr} />
@@ -279,10 +288,16 @@ export default function App() {
         </aside>
 
         <section className="min-w-0">
-          {!result ? (
+          {isParsing ? (
+            <div className="grid min-h-[360px] place-content-center rounded-lg border border-slate-200 bg-white p-6 text-center shadow-panel">
+              <Loader2 className="mx-auto mb-3 h-8 w-8 animate-spin text-blue-600" />
+              <strong className="text-sm">Parsing PDF layout...</strong>
+              <p className="mt-2 text-xs text-slate-500">{file?.name || "Selected PDF"}</p>
+            </div>
+          ) : !result ? (
             <div className="grid min-h-[360px] place-content-center rounded-lg border border-dashed border-slate-300 bg-white p-6 text-center shadow-panel">
               <ScanLine className="mx-auto mb-3 h-8 w-8 text-slate-400" />
-              <strong className="text-sm">Upload a PDF to inspect layout regions.</strong>
+              <strong className="text-sm">{file ? "PDF is ready to parse." : "Upload a PDF to inspect layout regions."}</strong>
             </div>
           ) : (
             <div className="grid gap-4">

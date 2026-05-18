@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
@@ -71,6 +72,7 @@ class DocLayoutYoloDetector(LayoutDetector):
     def _load_model(self):
         if self._model is not None:
             return self._model
+        configure_doclayout_runtime_cache()
         try:
             from doclayout_yolo import YOLOv10  # type: ignore
         except ImportError as exc:
@@ -118,6 +120,18 @@ class DocLayoutYoloDetector(LayoutDetector):
                 )
             )
         return regions
+
+
+
+def configure_doclayout_runtime_cache() -> None:
+    cache_root = Path(os.environ.get("DOCSOCR_CACHE_DIR", Path.cwd() / ".cache" / "docsocr"))
+    yolo_config_dir = cache_root / "ultralytics"
+    matplotlib_config_dir = cache_root / "matplotlib"
+    yolo_config_dir.mkdir(parents=True, exist_ok=True)
+    matplotlib_config_dir.mkdir(parents=True, exist_ok=True)
+
+    os.environ.setdefault("YOLO_CONFIG_DIR", str(yolo_config_dir))
+    os.environ.setdefault("MPLCONFIGDIR", str(matplotlib_config_dir))
 
 
 def build_detector(

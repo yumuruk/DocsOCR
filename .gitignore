@@ -1,6 +1,7 @@
 .venv/
 .uv-cache/
 .uv-python/
+.cache/
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -11,3 +12,5 @@ frontend/.vite/
 
 runs/
 .smoke*/
+
+models/*.pt

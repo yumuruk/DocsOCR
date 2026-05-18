@@ -19,6 +19,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 FALLBACK_WEB_DIR = PROJECT_ROOT / "src" / "pdf_layout_parser" / "web"
 FRONTEND_DIST = PROJECT_ROOT / "frontend" / "dist"
 RUNS_DIR = PROJECT_ROOT / "runs"
+MODELS_DIR = PROJECT_ROOT / "models"
+DEFAULT_DOCLAYOUT_MODEL = MODELS_DIR / "doclayout_yolo_docstructbench_imgsz1024.pt"
 RUNS_DIR.mkdir(parents=True, exist_ok=True)
 
 ASSETS_DIR = FRONTEND_DIST / "assets" if (FRONTEND_DIST / "assets").exists() else FALLBACK_WEB_DIR
@@ -61,7 +63,7 @@ async def parse_pdf(
 
     options = ParseRequestOptions(
         detector=detector,  # type: ignore[arg-type]
-        model_path=Path(model_path) if model_path else None,
+        model_path=resolve_model_path(detector, model_path),
         device=device,
         max_pages=max_pages,
         run_ocr=run_ocr,
@@ -134,6 +136,15 @@ async def fine_tune_doclayout_yolo(
             "training": training.model_dump(mode="json"),
         }
     )
+
+
+def resolve_model_path(detector: str, model_path: str | None) -> Path | None:
+    if model_path:
+        path = Path(model_path)
+        return path if path.is_absolute() else PROJECT_ROOT / path
+    if detector == "doclayout-yolo" and DEFAULT_DOCLAYOUT_MODEL.exists():
+        return DEFAULT_DOCLAYOUT_MODEL
+    return None
 
 
 def to_web_result(result: DocumentParseResult) -> dict:
