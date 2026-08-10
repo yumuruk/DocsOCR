@@ -14,3 +14,5 @@ runs/
 .smoke*/
 
 models/*.pt
+
+.DS_Store
