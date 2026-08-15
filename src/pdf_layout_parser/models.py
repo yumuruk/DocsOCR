@@ -133,9 +133,40 @@ class DocumentParseResult(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class AnnotationSource(str, Enum):
+    """Where a box came from.
+
+    Needed to compare label provenance as an experiment axis: pure manual
+    labelling, model predictions accepted as-is (self-training), and model
+    predictions corrected by a human (HITL). Without this tag the three are
+    indistinguishable once exported and cannot be compared.
+    """
+
+    MANUAL = "manual"
+    PREDICTION = "prediction"
+    CORRECTION = "correction"
+
+
+class LabelStatus(str, Enum):
+    """Whether a page's annotation is finished.
+
+    Resolves the "empty page" ambiguity: previously a page with zero boxes
+    exported as an empty YOLO label file, i.e. a pure-background negative sample.
+    A half-labelled page was therefore indistinguishable from a genuinely blank
+    one, and partial labelling silently corrupted both training and ground truth.
+    Only COMPLETE pages are exported or evaluated; a COMPLETE page with zero
+    boxes is a real negative and is kept deliberately.
+    """
+
+    UNLABELED = "unlabeled"
+    IN_PROGRESS = "in_progress"
+    COMPLETE = "complete"
+
+
 class AnnotationBox(BaseModel):
     label: str
     bbox: BoundingBox
+    source: AnnotationSource = AnnotationSource.MANUAL
 
 
 class AnnotationPage(BaseModel):
@@ -143,6 +174,12 @@ class AnnotationPage(BaseModel):
     width: int
     height: int
     annotations: list[AnnotationBox] = Field(default_factory=list)
+    # Document-level identity, required for leak-free splits. Optional so existing
+    # annotation files keep loading; `splits.document_id_for` falls back to the
+    # image path when it is absent.
+    document_id: str | None = None
+    page_number: int | None = None
+    label_status: LabelStatus = LabelStatus.COMPLETE
 
 
 class AnnotationDataset(BaseModel):
