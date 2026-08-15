@@ -22,6 +22,12 @@ doclayout = [
   "doclayout-yolo>=0.0.3",
   "huggingface-hub>=0.23",
 ]
+# Only needed to cross-check the AP implementation against the reference one.
+# The evaluation harness itself is pure Python and needs nothing here; without
+# this extra the parity tests in tests/test_evaluation.py skip themselves.
+eval = [
+  "pycocotools>=2.0",
+]
 
 [project.scripts]
 pdf-layout-parser = "pdf_layout_parser.cli:main"
