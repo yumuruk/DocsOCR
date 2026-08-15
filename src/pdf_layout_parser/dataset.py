@@ -226,17 +226,16 @@ def split_pages(pages: list, train_ratio: float = 0.8) -> tuple[list, list]:
     return train_pages, val_pages
 
 
-def build_data_yaml(labels: list[str] | None = None, has_test: bool = False) -> str:
+def build_data_yaml(has_test: bool = False) -> str:
     """Emit the dataset descriptor with the canonical class list.
 
     ``nc`` and ``names`` are always the full catalogue regardless of which classes
     happen to appear in this dataset. Sizing them to the present classes is what
     made class ids dataset-dependent, so a checkpoint trained on one export could
-    not be evaluated against another.
+    not be evaluated against another. There is deliberately no ``labels``
+    parameter: an earlier version accepted one and silently ignored it, which is
+    worse than either honouring or refusing it.
     """
-    if labels is not None and list(labels) != list(CANONICAL_LABELS):
-        # Accepting an arbitrary list here is what caused the drift; ignore it.
-        pass
     names = "\n".join(f"  {index}: {label}" for index, label in enumerate(CANONICAL_LABELS))
     test_line = "test: test.txt\n" if has_test else ""
     return (
