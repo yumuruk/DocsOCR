@@ -118,3 +118,31 @@ GT 밖 페이지 예측 주입, 파라미터 무시 여부). 기하 코어(브�
 95 tests OK. 교훈: 1·2번 모두 "정상 케이스 테스트는 전부 통과하는" 결함이었다 —
 균등 크기 문서로만 테스트했기 때문. 회귀 테스트는 이제 불균형 코퍼스(UnevenCorpusTests)를
 포함한다. 실측 데이터를 라벨링하기 전에 잡았으므로 무효화된 run은 없다.
+
+## 2026-08-15 — training.py 보강: 재현성 표면 완성 (차단 요인 #3 해소)
+
+M3의 공통 형태는 "run은 돌았지만 기록이 무엇이 돌았는지 말하지 않는다"였다. 수정:
+
+- **`seed`·`freeze` 노출** — `TrainingConfig`와 CLI(`--seed`, `--freeze N`). 작은 n 셀의
+  3시드 반복과 백본 동결 실험 축이 이제 가능하다. `freeze=None`은 ultralytics에 아예
+  전달하지 않는다 (부재가 "전체 학습"의 표현).
+- **기록 == 실행 보장** — `training_kwargs()`가 단일 진실원: 실제 `YOLOv10.train(**kwargs)`
+  호출, `TrainingResult.train_kwargs`, preview 문자열이 전부 같은 dict에서 나온다. 기존
+  preview는 손으로 조립돼 seed·freeze·lr 등을 누락했다.
+- **디스크 저장** — 모든 run(dry 포함)이 `<run_name>_result.json`을 남기고, `experiment`는
+  `experiments.json` manifest를 쓴다. 기존에는 stdout이 유일한 기록이었다.
+- **학습 시간 기록**, **from-scratch 경고** — `pretrain` 미지정 시 랜덤 초기화라는 사실을
+  결과에 명시 (기존엔 run_name이 "finetune"인 채 조용히 from-scratch).
+- **experiment 루프를 splits로 재배선** — 기존 루프는 여전히 legacy prefix 분할을 써서
+  C2가 실험 명령 경로에는 남아 있었다. 이제 분할을 한 번 만들고 모든 N 셀이 동일한
+  val/test를 공유하며 train만 중첩 표집한다 (`with_train_sample`). strict export라서
+  안전하지 않은 분할이면 실험이 시작 전에 거부된다. run_name에 학습 시드 포함
+  (`doclayout_pages_20_seed1`) — exist_ok=True에서도 시드 반복이 서로 덮어쓰지 않는다.
+  `--train-ratio` 플래그는 experiment에서 제거 — N별 재분할이 바로 C2였다.
+
+E2E 확인: `experiment --sample-sizes 3,6 --seed 1 --freeze 10` dry run에서 N=3/N=6의
+val.txt·test.txt 동일, result json에 seed/freeze 기록. 105 tests OK.
+
+**실측 차단 요인 현황**: #3(seed/freeze) 해소. 남은 것은 #1(라벨링 ~90페이지),
+#2(어노테이션 UI — removeAnnotation은 들어갔고 이동·리사이즈·리라벨·재로드 필요),
+#4(mosaic 기본값 — 이제 실험 축으로 돌릴 수 있음).

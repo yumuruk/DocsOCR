@@ -92,7 +92,7 @@ AP@0.5 / 0.50:0.95 전 구간 및 다중 클래스·중복 검출 케이스).
 | 축 | 수준 | 상태 |
 |---|---|---|
 | 라벨 페이지 수 `n` | 5 / 10 / 20 / 50 | `splits.sample_train_pages` (중첩 표집) |
-| 초기화·학습 `init` | `zeroshot` / `docstructbench` / `docstructbench-freeze` / `coco` / `scratch` | `freeze`·`seed` 미노출 — `training.py` 보강 필요 |
+| 초기화·학습 `init` | `zeroshot` / `docstructbench` / `docstructbench-freeze` / `coco` / `scratch` | `--pretrain` / `--freeze N` / `--seed` 노출됨 |
 | 라벨 출처 `labels` | `manual` / `pseudo` (무수정 self-training) / `hitl` (예측 후 수정) | `AnnotationSource`로 태깅. `hitl`은 UI 보강 선행 |
 | 증강 `mosaic` | `1.0` / `0` | 10페이지에 mosaic 1.0 기본값은 과할 가능성 |
 | 시드 `seed` | 0 / 1 / 2 | 작은 n에서 시드 분산이 효과보다 큼 — 반복 필수 |
@@ -169,8 +169,12 @@ uv run pdf-layout-parser compare ./runs/eval --output docs/comparison.md
 - 예측 conf / 작동점 conf, 채점 소요 시간
 - GT 박스 수, 예측 수, 페이지 수
 
-수동으로 기록해야 하는 항목(아직 자동화 안 됨): 학습 소요 시간, 실제 학습 명령, `freeze`/`seed` 값.
-`training.py`가 `seed`·`freeze`를 노출하고 `ExperimentResult`를 디스크에 저장하게 되면 자동화된다.
+학습 쪽도 자동 기록된다: 모든 학습 run은 `<run_name>_result.json`을 남기고, 여기에는
+`YOLOv10.train()`에 **실제로 전달된 kwargs 전체**(seed·freeze 포함), 소요 시간, from-scratch 경고가
+들어간다 — preview 문자열도 같은 dict에서 렌더링되므로 기록과 실행이 어긋날 수 없다.
+`experiment` 명령은 셀 전체를 `experiments.json` manifest로 저장하며, 모든 셀이 **동일한 val/test를
+공유**하고 train만 중첩 표집된다 (`--split-seed` / `--sample-seed` / `--seed`로 각각 분할·표집·학습
+시드를 제어).
 
 ## 8. 알려진 한계
 
