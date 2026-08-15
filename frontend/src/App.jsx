@@ -6,6 +6,8 @@ import {
   Loader2,
   Play,
   ScanLine,
+  Upload,
+  Wand2,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -84,8 +86,13 @@ export default function App() {
   // (relabel, keyboard delete) after the gesture ends.
   const [gesture, setGesture] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
+  // Pages the annotator has marked finished. Exported as label_status so the
+  // dataset side can tell "labelled and empty" from "not labelled yet" (C5).
+  const [donePages, setDonePages] = useState(() => new Set());
+  const [annotationNote, setAnnotationNote] = useState("");
   const [error, setError] = useState("");
   const nextAnnotationId = useRef(1);
+  const importInputRef = useRef(null);
   const isParsing = status.tone === "busy";
   const usesModel = detector === "doclayout-yolo";
 
@@ -100,12 +107,17 @@ export default function App() {
         image_path: page.image_path,
         width: page.width,
         height: page.height,
+        page_number: page.page_number,
+        // "in_progress" until the annotator marks the page done. The exporter
+        // and evaluator skip non-complete pages, so an unfinished page can never
+        // masquerade as an empty one.
+        label_status: donePages.has(page.page_number) ? "complete" : "in_progress",
         annotations: annotations
           .filter((item) => item.page_number === page.page_number)
           .map((item) => ({ label: item.label, bbox: item.bbox, source: item.source })),
       })),
     };
-  }, [annotations, result]);
+  }, [annotations, donePages, result]);
 
   function resetRun() {
     setResult(null);
@@ -113,6 +125,8 @@ export default function App() {
     setHiddenLabels(new Set());
     setGesture(null);
     setSelectedId(null);
+    setDonePages(new Set());
+    setAnnotationNote("");
     setElapsed(null);
     setError("");
   }
@@ -310,6 +324,85 @@ export default function App() {
     );
   }
 
+  function togglePageDone(pageNumber) {
+    setDonePages((current) => {
+      const next = new Set(current);
+      if (next.has(pageNumber)) next.delete(pageNumber);
+      else next.add(pageNumber);
+      return next;
+    });
+  }
+
+  function loadPredictions() {
+    if (!result) return;
+    let id = nextAnnotationId.current;
+    const loaded = result.pages.flatMap((page) =>
+      page.regions.map((region) => ({
+        id: id++,
+        page_number: page.page_number,
+        label: region.label,
+        bbox: {
+          x: region.bbox.x,
+          y: region.bbox.y,
+          width: region.bbox.width,
+          height: region.bbox.height,
+        },
+        source: "prediction",
+      }))
+    );
+    nextAnnotationId.current = id;
+    // Replace rather than append: the HITL scenario is "start from the model's
+    // output and fix it", not "mix it into what I already drew".
+    setAnnotations(loaded);
+    setSelectedId(null);
+    setAnnotationNote(`Loaded ${loaded.length} prediction(s) — edits become corrections`);
+  }
+
+  async function importAnnotations(file) {
+    if (!file || !result) return;
+    try {
+      const data = JSON.parse(await file.text());
+      const pagesByName = new Map(
+        result.pages.map((page) => [baseName(page.image_path), page])
+      );
+      let id = nextAnnotationId.current;
+      const loaded = [];
+      const done = new Set();
+      let skippedPages = 0;
+      for (const page of data.pages || []) {
+        const match = pagesByName.get(baseName(page.image_path || ""));
+        // Coordinates only mean anything on the exact render they were drawn
+        // over, so a page that is missing or was rendered at another size is
+        // skipped, not guessed at.
+        if (!match || match.width !== page.width || match.height !== page.height) {
+          skippedPages += 1;
+          continue;
+        }
+        if (page.label_status === "complete") done.add(match.page_number);
+        for (const annotation of page.annotations || []) {
+          const bbox = annotation.bbox || {};
+          loaded.push({
+            id: id++,
+            page_number: match.page_number,
+            label: annotation.label,
+            bbox: { x: bbox.x, y: bbox.y, width: bbox.width, height: bbox.height },
+            source: annotation.source || "manual",
+          });
+        }
+      }
+      nextAnnotationId.current = id;
+      setAnnotations(loaded);
+      setDonePages(done);
+      setSelectedId(null);
+      setAnnotationNote(
+        `Imported ${loaded.length} box(es)` +
+          (skippedPages ? ` · ${skippedPages} page(s) skipped (not in this run or size mismatch)` : "")
+      );
+    } catch (caught) {
+      setAnnotationNote(`Import failed: ${readableError(caught)}`);
+    }
+  }
+
   function exportAnnotations() {
     if (!annotationPayload) return;
     downloadJson("annotations.json", annotationPayload);
@@ -497,6 +590,36 @@ export default function App() {
                 <button
                   className="secondary-button"
                   type="button"
+                  onClick={loadPredictions}
+                  disabled={!result}
+                  title="Replace boxes with the model's detections, then correct them"
+                >
+                  <Wand2 className="h-3.5 w-3.5" />
+                  Predictions
+                </button>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={() => importInputRef.current?.click()}
+                  disabled={!result}
+                  title="Load a previously exported annotations.json"
+                >
+                  <Upload className="h-3.5 w-3.5" />
+                  Import
+                </button>
+                <input
+                  ref={importInputRef}
+                  className="hidden"
+                  type="file"
+                  accept="application/json"
+                  onChange={(event) => {
+                    importAnnotations(event.target.files?.[0]);
+                    event.target.value = "";
+                  }}
+                />
+                <button
+                  className="secondary-button"
+                  type="button"
                   onClick={exportAnnotations}
                   disabled={!annotationPayload}
                 >
@@ -517,9 +640,13 @@ export default function App() {
                 </button>
               </div>
 
-              <p className="font-mono text-[10px] leading-4 text-faint">
-                Click a box to select · drag to move · corners resize · Del removes
-              </p>
+              {annotationNote ? (
+                <p className="font-mono text-[10px] leading-4 text-faint">{annotationNote}</p>
+              ) : (
+                <p className="font-mono text-[10px] leading-4 text-faint">
+                  Click a box to select · drag to move · corners resize · Del removes
+                </p>
+              )}
             </div>
           </Panel>
 
@@ -595,12 +722,14 @@ export default function App() {
               {result.pages.map((page) => (
                 <PageProof
                   annotations={annotations}
+                  done={donePages.has(page.page_number)}
                   gesture={gesture}
                   hiddenLabels={hiddenLabels}
                   key={page.page_number}
                   onPointerDown={handlePointerDown}
                   onPointerMove={handlePointerMove}
                   onPointerUp={handlePointerUp}
+                  onToggleDone={togglePageDone}
                   page={page}
                   selectedId={selectedId}
                   zoom={zoom}
@@ -665,11 +794,13 @@ function Metric({ label, value }) {
 
 function PageProof({
   annotations,
+  done,
   gesture,
   hiddenLabels,
   onPointerDown,
   onPointerMove,
   onPointerUp,
+  onToggleDone,
   page,
   selectedId,
   zoom,
@@ -689,6 +820,20 @@ function PageProof({
         <span className="ml-auto font-mono text-[11px] tabular-nums text-faint">
           {page.width} × {page.height} px · {regions.length} regions
         </span>
+        <label
+          className={`flex cursor-pointer items-center gap-1.5 rounded border px-2 py-1 font-mono text-[11px] transition ${
+            done ? "border-transparent bg-action text-action-ink" : "border-line text-muted hover:border-line-strong"
+          }`}
+          title="Exported as label_status: complete — unfinished pages are excluded from training and evaluation"
+        >
+          <input
+            checked={done}
+            className="h-3 w-3 accent-[rgb(var(--action))]"
+            type="checkbox"
+            onChange={() => onToggleDone(page.page_number)}
+          />
+          Labeled
+        </label>
       </div>
 
       <div className="grid lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -1028,6 +1173,11 @@ function oppositeCorner(bbox, corner) {
   const x = corner.includes("w") ? bbox.x + bbox.width : bbox.x;
   const y = corner.includes("n") ? bbox.y + bbox.height : bbox.y;
   return { x, y };
+}
+
+function baseName(path) {
+  const parts = String(path).split(/[\\/]/);
+  return parts[parts.length - 1] || "";
 }
 
 function downloadJson(filename, data) {
