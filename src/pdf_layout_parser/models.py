@@ -211,6 +211,83 @@ class SplitSummary(BaseModel):
     test_documents: list[str] = Field(default_factory=list)
 
 
+class ClassDetectionMetrics(BaseModel):
+    label: str
+    gt_count: int
+    pred_count: int
+    # None means "no ground truth for this class", which is not the same as 0.0.
+    ap50: float | None = None
+    ap5095: float | None = None
+
+
+class DetectionMetrics(BaseModel):
+    per_class: list[ClassDetectionMetrics] = Field(default_factory=list)
+    map50: float | None = None
+    map5095: float | None = None
+    iou_thresholds: list[float] = Field(default_factory=list)
+    score_threshold: float = 0.0
+    evaluated_labels: list[str] = Field(default_factory=list)
+
+
+class ConfusionCell(BaseModel):
+    gt_label: str
+    pred_label: str
+    count: int
+
+
+class PageOperationalMetrics(BaseModel):
+    image_id: str
+    page_area: float
+    gt_keep_area: float
+    pred_keep_area: float
+    loss_area: float
+    contamination_area: float
+
+
+class OperationalMetrics(BaseModel):
+    variant: str
+    page_count: int
+    page_area: float
+    gt_keep_area: float
+    pred_keep_area: float
+    loss_area: float
+    contamination_area: float
+    reduction_rate: float
+    loss_rate: float | None = None
+    contamination_rate: float | None = None
+
+
+class EvaluationReport(BaseModel):
+    """Everything needed to reproduce and compare one evaluated cell."""
+
+    run_name: str
+    detector: str
+    model_path: str | None = None
+    label_mapping: str = "identity"
+    label_catalogue: list[str] = Field(default_factory=list)
+    catalogue_fingerprint: str | None = None
+    dataset_fingerprint: str | None = None
+    annotation_path: str | None = None
+    page_count: int = 0
+    gt_box_count: int = 0
+    pred_box_count: int = 0
+    eval_confidence: float = 0.001
+    operating_confidence: float = 0.25
+    seed: int | None = None
+    split: SplitSummary | None = None
+    # Which split was scored ("test"/"val"/...), and the experiment coordinates of
+    # this cell (e.g. {"n": "20", "init": "docstructbench", "labels": "manual"}).
+    # Recorded so a ledger row can be traced back to a position in the matrix.
+    scored_split: str | None = None
+    tags: dict[str, str] = Field(default_factory=dict)
+    detection: DetectionMetrics | None = None
+    operational: list[OperationalMetrics] = Field(default_factory=list)
+    confusion: list[ConfusionCell] = Field(default_factory=list)
+    per_page_operational: list[PageOperationalMetrics] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+    duration_seconds: float | None = None
+
+
 class ParseRequestOptions(BaseModel):
     detector: Literal["heuristic", "doclayout-yolo"] = "heuristic"
     model_path: Path | None = None
