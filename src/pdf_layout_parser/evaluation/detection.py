@@ -150,9 +150,17 @@ def evaluate_detections(
     preds: list[PredBox],
     labels: tuple[str, ...] = CANONICAL_LABELS,
     iou_thresholds: tuple[float, ...] = IOU_THRESHOLDS,
-    score_threshold: float = 0.0,
+    recorded_score_floor: float = 0.0,
 ) -> DetectionMetrics:
-    """Per-class AP@0.5, AP@0.5:0.95, and their macro means."""
+    """Per-class AP@0.5, AP@0.5:0.95, and their macro means.
+
+    ``recorded_score_floor`` is provenance, not a filter: it is written into the
+    result as the confidence the predictions were *generated* at, and no
+    prediction is discarded here. AP must see the full score range -- filtering
+    is what the operating point does, and applying one here would truncate the
+    PR curve exactly the way FINDINGS C4 describes. The previous parameter name
+    (``score_threshold``) read as if it filtered.
+    """
     per_class: list[ClassDetectionMetrics] = []
     for label in labels:
         class_gts = [gt for gt in gts if gt.label == label]
@@ -184,7 +192,7 @@ def evaluate_detections(
         map50=sum(scored50) / len(scored50) if scored50 else None,
         map5095=sum(scored5095) / len(scored5095) if scored5095 else None,
         iou_thresholds=list(iou_thresholds),
-        score_threshold=score_threshold,
+        score_threshold=recorded_score_floor,
         evaluated_labels=list(labels),
     )
 

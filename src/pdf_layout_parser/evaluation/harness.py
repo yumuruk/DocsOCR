@@ -343,7 +343,7 @@ def evaluate(
         predictions,
         labels=CANONICAL_LABELS,
         iou_thresholds=iou_thresholds,
-        score_threshold=eval_confidence,
+        recorded_score_floor=eval_confidence,
     )
     model_operational, per_page = evaluate_operational(
         ground_truth.pages,
