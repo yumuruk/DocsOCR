@@ -8,7 +8,7 @@ import {
   ScanLine,
   X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const LABELS = [
   "title",
@@ -79,8 +79,13 @@ export default function App() {
   const [elapsed, setElapsed] = useState(null);
   const [annotations, setAnnotations] = useState([]);
   const [hiddenLabels, setHiddenLabels] = useState(() => new Set());
-  const [drawing, setDrawing] = useState(null);
+  // One pointer gesture at a time: drawing a new box, moving a box, or resizing
+  // by a corner handle. Selection is separate state so a box stays selected
+  // (relabel, keyboard delete) after the gesture ends.
+  const [gesture, setGesture] = useState(null);
+  const [selectedId, setSelectedId] = useState(null);
   const [error, setError] = useState("");
+  const nextAnnotationId = useRef(1);
   const isParsing = status.tone === "busy";
   const usesModel = detector === "doclayout-yolo";
 
@@ -97,7 +102,7 @@ export default function App() {
         height: page.height,
         annotations: annotations
           .filter((item) => item.page_number === page.page_number)
-          .map((item) => ({ label: item.label, bbox: item.bbox })),
+          .map((item) => ({ label: item.label, bbox: item.bbox, source: item.source })),
       })),
     };
   }, [annotations, result]);
@@ -106,6 +111,8 @@ export default function App() {
     setResult(null);
     setAnnotations([]);
     setHiddenLabels(new Set());
+    setGesture(null);
+    setSelectedId(null);
     setElapsed(null);
     setError("");
   }
@@ -139,6 +146,10 @@ export default function App() {
       setResult(await response.json());
       setAnnotations([]);
       setHiddenLabels(new Set());
+      setGesture(null);
+      setSelectedId(null);
+      setDonePages(new Set());
+      setAnnotationNote("");
       setElapsed((performance.now() - startedAt) / 1000);
       setStatus({ label: "Done", tone: "done" });
     } catch (caught) {
@@ -156,67 +167,168 @@ export default function App() {
     });
   }
 
+  // A prediction that a human touched is no longer a prediction. The
+  // manual/prediction/correction distinction is an experiment axis downstream,
+  // so the transition happens at the moment of edit, not at export.
+  function editedSource(source) {
+    return source === "prediction" ? "correction" : source || "manual";
+  }
+
   function handlePointerDown(event, page) {
+    const point = getSvgPoint(event.currentTarget, event);
+    // No transform yet means no usable origin, so never begin a gesture that
+    // would have to guess where it started.
+    if (!point) return;
+    const pageAnnotations = annotations.filter((item) => item.page_number === page.page_number);
+
+    // Corner handles of the selected box take priority over everything under them.
+    const selected = pageAnnotations.find((item) => item.id === selectedId);
+    if (selected) {
+      const corner = hitHandle(point, selected.bbox);
+      if (corner) {
+        event.currentTarget.setPointerCapture(event.pointerId);
+        setGesture({
+          type: "resize",
+          id: selected.id,
+          pageNumber: page.page_number,
+          pageWidth: page.width,
+          pageHeight: page.height,
+          anchor: oppositeCorner(selected.bbox, corner),
+          origin: { ...selected.bbox },
+        });
+        return;
+      }
+    }
+
+    // Topmost box under the pointer: last drawn wins, matching paint order.
+    const hit = [...pageAnnotations].reverse().find((item) => containsPoint(item.bbox, point));
+    if (hit) {
+      setSelectedId(hit.id);
+      event.currentTarget.setPointerCapture(event.pointerId);
+      setGesture({
+        type: "move",
+        id: hit.id,
+        pageNumber: page.page_number,
+        pageWidth: page.width,
+        pageHeight: page.height,
+        start: point,
+        origin: { ...hit.bbox },
+      });
+      return;
+    }
+
+    setSelectedId(null);
     if (!drawMode) return;
-    const start = getSvgPoint(event.currentTarget, event);
-    // No transform yet means no usable origin, so never begin a drag that would
-    // have to guess where it started.
-    if (!start) return;
     event.currentTarget.setPointerCapture(event.pointerId);
-    setDrawing({
+    setGesture({
+      type: "draw",
       pageNumber: page.page_number,
-      start,
-      current: start,
+      start: point,
+      current: point,
     });
   }
 
   function handlePointerMove(event) {
-    if (!drawing) return;
+    if (!gesture) return;
     // Read the point before handing it to the updater: React clears
     // `currentTarget` once the handler returns, and the updater runs later.
     const point = getSvgPoint(event.currentTarget, event);
-    // Hold the last good position rather than dropping the drag; the next move
-    // event recovers it.
+    // Hold the last good position rather than dropping the gesture; the next
+    // move event recovers it.
     if (!point) return;
-    setDrawing((current) => {
-      if (!current) return current;
-      return {
-        ...current,
-        current: point,
-      };
-    });
+
+    if (gesture.type === "draw") {
+      setGesture((current) => (current ? { ...current, current: point } : current));
+      return;
+    }
+
+    // Move and resize apply live so the box tracks the pointer.
+    const { id, pageWidth, pageHeight } = gesture;
+    setAnnotations((items) =>
+      items.map((item) => {
+        if (item.id !== id) return item;
+        const bbox =
+          gesture.type === "move"
+            ? clampShift(gesture.origin, point.x - gesture.start.x, point.y - gesture.start.y, pageWidth, pageHeight)
+            : clampBox(normalizeBox(gesture.anchor, point), pageWidth, pageHeight);
+        return { ...item, bbox };
+      })
+    );
   }
 
   function handlePointerUp(event, page) {
-    if (!drawing || drawing.pageNumber !== page.page_number) return;
-    // Fall back to the last position the move handler managed to map. `start` and
-    // `current` are non-null for as long as `drawing` exists, because pointer-down
-    // refuses to start a drag without a transform, so the fallback is always a
-    // real point. Clearing `drawing` is unconditional: returning early would leave
-    // the rubber band on screen with no pointer attached to it.
-    const end = getSvgPoint(event.currentTarget, event) ?? drawing.current;
-    setDrawing(null);
-    const bbox = clampBox(normalizeBox(drawing.start, end), page.width, page.height);
+    if (!gesture || gesture.pageNumber !== page.page_number) return;
+    const active = gesture;
+    // Clearing the gesture is unconditional: returning early would leave it
+    // attached to a pointer that no longer exists.
+    setGesture(null);
 
-    if (bbox.width < 8 || bbox.height < 8) return;
-    setAnnotations((items) => [
-      ...items,
-      {
-        page_number: page.page_number,
-        label: selectedLabel,
-        bbox,
-      },
-    ]);
+    if (active.type === "draw") {
+      // Fall back to the last position the move handler managed to map; `start`
+      // and `current` are real points for as long as the gesture exists.
+      const end = getSvgPoint(event.currentTarget, event) ?? active.current;
+      const bbox = clampBox(normalizeBox(active.start, end), page.width, page.height);
+      if (bbox.width < 8 || bbox.height < 8) return;
+      const id = nextAnnotationId.current++;
+      setAnnotations((items) => [
+        ...items,
+        { id, page_number: page.page_number, label: selectedLabel, bbox, source: "manual" },
+      ]);
+      setSelectedId(id);
+      return;
+    }
+
+    // Move/resize already applied live; finalise. A resize collapsed below the
+    // minimum reverts to where it started rather than leaving a sliver.
+    setAnnotations((items) =>
+      items.map((item) => {
+        if (item.id !== active.id) return item;
+        const bbox =
+          active.type === "resize" && (item.bbox.width < 8 || item.bbox.height < 8)
+            ? active.origin
+            : item.bbox;
+        const moved =
+          bbox.x !== active.origin.x ||
+          bbox.y !== active.origin.y ||
+          bbox.width !== active.origin.width ||
+          bbox.height !== active.origin.height;
+        return { ...item, bbox, source: moved ? editedSource(item.source) : item.source };
+      })
+    );
   }
 
-  function removeAnnotation(index) {
-    setAnnotations((items) => items.filter((_, position) => position !== index));
+  function removeAnnotation(id) {
+    setAnnotations((items) => items.filter((item) => item.id !== id));
+    setSelectedId((current) => (current === id ? null : current));
+  }
+
+  function relabelAnnotation(id, label) {
+    setAnnotations((items) =>
+      items.map((item) =>
+        item.id === id ? { ...item, label, source: editedSource(item.source) } : item
+      )
+    );
   }
 
   function exportAnnotations() {
     if (!annotationPayload) return;
     downloadJson("annotations.json", annotationPayload);
   }
+
+  // Keyboard editing: Escape deselects, Delete removes the selected box.
+  // Ignored while typing in a form control.
+  useEffect(() => {
+    function onKeyDown(event) {
+      if (/^(INPUT|SELECT|TEXTAREA)$/.test(event.target.tagName)) return;
+      if (event.key === "Escape") setSelectedId(null);
+      if ((event.key === "Delete" || event.key === "Backspace") && selectedId !== null) {
+        event.preventDefault();
+        removeAnnotation(selectedId);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selectedId]);
 
   return (
     <div className="min-h-screen bg-paper text-ink">
@@ -331,25 +443,44 @@ export default function App() {
 
               {annotations.length > 0 ? (
                 <ul className="grid max-h-52 gap-px overflow-auto rounded-md border border-line bg-line">
-                  {annotations.map((annotation, index) => (
+                  {annotations.map((annotation) => (
                     <li
-                      className="flex items-center gap-2 bg-surface px-2.5 py-1.5"
-                      key={`${annotation.page_number}-${index}`}
+                      className={`flex cursor-pointer items-center gap-2 px-2.5 py-1.5 ${
+                        annotation.id === selectedId ? "bg-raised" : "bg-surface"
+                      }`}
+                      key={annotation.id}
+                      onClick={() => setSelectedId(annotation.id)}
                     >
                       <span
                         className="swatch"
                         style={{ backgroundColor: COLORS[annotation.label] || COLORS.manual }}
                       />
-                      <span className="truncate font-mono text-[11px]">{annotation.label}</span>
+                      <select
+                        aria-label={`Label for box on page ${annotation.page_number}`}
+                        className="w-24 rounded border border-transparent bg-transparent font-mono text-[11px] text-ink transition hover:border-line"
+                        value={annotation.label}
+                        onChange={(event) => relabelAnnotation(annotation.id, event.target.value)}
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        {Array.from(new Set([...LABELS, annotation.label])).map((label) => (
+                          <option key={label} value={label}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
                       <span className="ml-auto font-mono text-[10px] tabular-nums text-faint">
-                        p{annotation.page_number} · {Math.round(annotation.bbox.width)}×
+                        {annotation.source === "manual" ? "" : `${annotation.source} · `}p
+                        {annotation.page_number} · {Math.round(annotation.bbox.width)}×
                         {Math.round(annotation.bbox.height)}
                       </span>
                       <button
                         aria-label={`Delete ${annotation.label} box on page ${annotation.page_number}`}
                         className="rounded p-0.5 text-faint transition hover:bg-raised hover:text-danger"
                         type="button"
-                        onClick={() => removeAnnotation(index)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          removeAnnotation(annotation.id);
+                        }}
                       >
                         <X className="h-3.5 w-3.5" />
                       </button>
@@ -375,13 +506,20 @@ export default function App() {
                 <button
                   className="secondary-button"
                   type="button"
-                  onClick={() => setAnnotations([])}
+                  onClick={() => {
+                    setAnnotations([]);
+                    setSelectedId(null);
+                  }}
                   disabled={annotations.length === 0}
                 >
                   <Eraser className="h-3.5 w-3.5" />
                   Clear all
                 </button>
               </div>
+
+              <p className="font-mono text-[10px] leading-4 text-faint">
+                Click a box to select · drag to move · corners resize · Del removes
+              </p>
             </div>
           </Panel>
 
@@ -457,13 +595,14 @@ export default function App() {
               {result.pages.map((page) => (
                 <PageProof
                   annotations={annotations}
-                  drawing={drawing}
+                  gesture={gesture}
                   hiddenLabels={hiddenLabels}
                   key={page.page_number}
                   onPointerDown={handlePointerDown}
                   onPointerMove={handlePointerMove}
                   onPointerUp={handlePointerUp}
                   page={page}
+                  selectedId={selectedId}
                   zoom={zoom}
                 />
               ))}
@@ -526,25 +665,28 @@ function Metric({ label, value }) {
 
 function PageProof({
   annotations,
-  drawing,
+  gesture,
   hiddenLabels,
   onPointerDown,
   onPointerMove,
   onPointerUp,
   page,
+  selectedId,
   zoom,
 }) {
   const regions = page.regions.filter((region) => !hiddenLabels.has(region.label));
   const pageAnnotations = annotations.filter((item) => item.page_number === page.page_number);
   const displayWidth = getDisplayWidth(page, zoom);
   const previewBox =
-    drawing?.pageNumber === page.page_number ? normalizeBox(drawing.start, drawing.current) : null;
+    gesture?.type === "draw" && gesture.pageNumber === page.page_number
+      ? normalizeBox(gesture.start, gesture.current)
+      : null;
 
   return (
     <article className="panel overflow-hidden">
       <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
         <h2 className="font-mono text-[12px] font-semibold">Page {page.page_number}</h2>
-        <span className="font-mono text-[11px] tabular-nums text-faint">
+        <span className="ml-auto font-mono text-[11px] tabular-nums text-faint">
           {page.width} × {page.height} px · {regions.length} regions
         </span>
       </div>
@@ -575,12 +717,14 @@ function PageProof({
                   label={region.label}
                 />
               ))}
-              {pageAnnotations.map((annotation, index) => (
+              {pageAnnotations.map((annotation) => (
                 <RegionBox
                   bbox={annotation.bbox}
-                  key={`${annotation.page_number}-${index}`}
+                  key={annotation.id}
                   label={annotation.label}
                   manual
+                  selected={annotation.id === selectedId}
+                  source={annotation.source}
                 />
               ))}
               {previewBox ? <RegionBox bbox={previewBox} label="manual" manual /> : null}
@@ -602,7 +746,7 @@ function PageProof({
   );
 }
 
-function RegionBox({ bbox, confidence = null, label, manual = false }) {
+function RegionBox({ bbox, confidence = null, label, manual = false, selected = false, source = "manual" }) {
   const color = COLORS[label] || COLORS.manual;
   return (
     <g>
@@ -610,8 +754,10 @@ function RegionBox({ bbox, confidence = null, label, manual = false }) {
         fill={manual ? "rgba(17, 24, 39, 0.07)" : "transparent"}
         height={bbox.height}
         stroke={color}
-        strokeDasharray={manual ? "10 8" : undefined}
-        strokeWidth={manual ? 4 : 3}
+        // Selection reads as "solid and handled"; unselected editable boxes stay
+        // dashed so they are visually distinct from model plates.
+        strokeDasharray={manual && !selected ? "10 8" : undefined}
+        strokeWidth={manual ? (selected ? 5 : 4) : 3}
         width={bbox.width}
         x={bbox.x}
         y={bbox.y}
@@ -624,8 +770,22 @@ function RegionBox({ bbox, confidence = null, label, manual = false }) {
         x={bbox.x + 6}
         y={Math.max(17, bbox.y + 17)}
       >
-        {manual ? `${label} · manual` : `${label}${confidence === null ? "" : ` ${Number(confidence).toFixed(2)}`}`}
+        {manual ? `${label} · ${source}` : `${label}${confidence === null ? "" : ` ${Number(confidence).toFixed(2)}`}`}
       </text>
+      {selected
+        ? cornerPoints(bbox).map((corner) => (
+            <rect
+              key={corner.name}
+              x={corner.x - HANDLE_SIZE / 2}
+              y={corner.y - HANDLE_SIZE / 2}
+              width={HANDLE_SIZE}
+              height={HANDLE_SIZE}
+              fill="white"
+              stroke={color}
+              strokeWidth={3}
+            />
+          ))
+        : null}
     </g>
   );
 }
@@ -814,6 +974,60 @@ function clampBox(bbox, width, height) {
     width: Number(Math.max(0, x2 - x).toFixed(2)),
     height: Number(Math.max(0, y2 - y).toFixed(2)),
   };
+}
+
+// Moving must never change a box's size: instead of clamping the corners (which
+// crops), the translation itself is limited so the whole box stays on the page.
+function clampShift(origin, dx, dy, width, height) {
+  const x = Math.max(0, Math.min(origin.x + dx, width - origin.width));
+  const y = Math.max(0, Math.min(origin.y + dy, height - origin.height));
+  return {
+    x: Number(x.toFixed(2)),
+    y: Number(y.toFixed(2)),
+    width: origin.width,
+    height: origin.height,
+  };
+}
+
+function containsPoint(bbox, point) {
+  return (
+    point.x >= bbox.x &&
+    point.x <= bbox.x + bbox.width &&
+    point.y >= bbox.y &&
+    point.y <= bbox.y + bbox.height
+  );
+}
+
+// Rendered size of a corner handle, in page pixels (dpi 180 renders, so ~14px
+// is comfortably visible without swallowing small boxes).
+const HANDLE_SIZE = 14;
+// Grab radius around a handle centre. Larger than the visual so corners are
+// forgiving to hit at any zoom.
+const HANDLE_HIT = 16;
+
+function cornerPoints(bbox) {
+  return [
+    { name: "nw", x: bbox.x, y: bbox.y },
+    { name: "ne", x: bbox.x + bbox.width, y: bbox.y },
+    { name: "sw", x: bbox.x, y: bbox.y + bbox.height },
+    { name: "se", x: bbox.x + bbox.width, y: bbox.y + bbox.height },
+  ];
+}
+
+function hitHandle(point, bbox) {
+  for (const corner of cornerPoints(bbox)) {
+    if (Math.abs(point.x - corner.x) <= HANDLE_HIT && Math.abs(point.y - corner.y) <= HANDLE_HIT) {
+      return corner.name;
+    }
+  }
+  return null;
+}
+
+// Resizing drags one corner while the opposite corner stays anchored.
+function oppositeCorner(bbox, corner) {
+  const x = corner.includes("w") ? bbox.x + bbox.width : bbox.x;
+  const y = corner.includes("n") ? bbox.y + bbox.height : bbox.y;
+  return { x, y };
 }
 
 function downloadJson(filename, data) {
