@@ -77,8 +77,15 @@ class DatasetSplits:
 
     @property
     def train_pool(self) -> list[AnnotationPage]:
-        """Pages available for training, i.e. everything outside test."""
-        return [*self.train, *self.val]
+        """Pages available for training: the train split only.
+
+        val is deliberately excluded. The val split is what training-time
+        validation (early stopping, best.pt selection) scores against, so a page
+        sampled from val into the training set would let the model be selected on
+        data it trained on -- the same leak this module exists to prevent. An
+        earlier version returned train+val and had exactly that problem.
+        """
+        return list(self.train)
 
     def summary(self) -> SplitSummary:
         return SplitSummary(

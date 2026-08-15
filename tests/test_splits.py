@@ -231,6 +231,15 @@ class NestedSamplingTests(unittest.TestCase):
         test_paths = {page.image_path for page in splits.test}
         self.assertFalse(pool_paths & test_paths)
 
+    def test_train_pool_excludes_val(self):
+        """train_pool once returned train+val, so pages sampled for training could
+        sit in the very split that early stopping selects the model on."""
+        splits = make_splits(make_pages(6, 4), seed=2)
+        pool_paths = {page.image_path for page in splits.train_pool}
+        val_paths = {page.image_path for page in splits.val}
+        self.assertTrue(val_paths)
+        self.assertFalse(pool_paths & val_paths)
+
 
 if __name__ == "__main__":
     unittest.main()
