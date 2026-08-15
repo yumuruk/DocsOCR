@@ -101,7 +101,14 @@ Python core module 안의 주요 파일:
 - `dataset.py`: 어노테이션 JSON -> YOLO dataset 변환
 - `training.py`: DocLayout-YOLO fine-tuning wrapper
 - `models.py`: 공통 데이터 모델
+- `labels.py`: 정본 라벨 카탈로그, 클래스 id 발급, DocStructBench 라벨 매핑
+- `splits.py`: 문서 단위 시드 분할, 고정 held-out 테스트셋, 중첩 표집
+- `evaluation/`: 평가 하네스 (IoU/AP, 운영 지표, 리포트)
+- `experiment_log.py`: append-only 실험 원장 기록
 - `core/__init__.py`: 핵심 파이프라인 import facade
+
+라벨 클래스 id는 `labels.CANONICAL_LABELS`에서만 발급됩니다. 어노테이션 JSON의 `labels` 배열
+순서에서 id를 유도하면 파일마다 id가 달라져 데이터셋 간 모델 호환이 깨집니다.
 
 ## 필수 의존성
 
@@ -313,6 +320,58 @@ uv run pdf-layout-parser parse ./sample.pdf ^
   --model-path ./runs/manual-train/training/doclayout_finetune/weights/best.pt ^
   --device cuda:0
 ```
+
+## 평가 하네스
+
+모델 성능을 측정하고 실험을 기록하는 부분입니다. 측정 규칙 정의는
+[docs/EVALUATION.md](docs/EVALUATION.md), 실측 원장은 [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md),
+판단 경위는 [docs/RESEARCH_LOG.md](docs/RESEARCH_LOG.md)에 있습니다.
+
+held-out 테스트셋에서 채점:
+
+```bash
+uv run pdf-layout-parser evaluate ./annotations.json ./runs/eval ^
+  --run-name ft-n20-s0 ^
+  --detector doclayout-yolo ^
+  --model-path ./runs/manual-train/training/doclayout_finetune/weights/best.pt ^
+  --label-mapping identity ^
+  --split test --split-seed 0 ^
+  --tag init=docstructbench --tag n=20 --tag labels=manual
+```
+
+사전학습 가중치의 zero-shot 베이스라인은 라벨 매핑이 **필수**입니다. DocStructBench 클래스명
+(`plain text`, `abandon`, ...)은 레포의 정본 8라벨과 다르므로 매핑 없이는 per-class AP가 성립하지 않습니다.
+
+```bash
+uv run pdf-layout-parser evaluate ./annotations.json ./runs/eval ^
+  --run-name zeroshot ^
+  --detector doclayout-yolo ^
+  --model-path ./models/doclayout_yolo_docstructbench_imgsz1024.pt ^
+  --label-mapping docstructbench ^
+  --tag init=zeroshot
+```
+
+여러 run을 비교표로:
+
+```bash
+uv run pdf-layout-parser compare ./runs/eval --output docs/comparison.md
+```
+
+리포트는 `<run-name>.md` / `<run-name>.json`으로 저장되고, 예측은
+`<run-name>_predictions.json`에 남습니다. 지표 코드를 수정한 뒤 모델 없이 과거 run을 재채점하려면
+`--predictions <path>`를 씁니다.
+
+`evaluate`는 기본으로 `docs/EXPERIMENTS.md`에 행을 추가합니다(`--no-ledger`로 끕니다).
+
+측정되는 것:
+
+- **운영 지표** — 절감률(전체 페이지 OCR 대비 면적 절감), 유실률(GT 내용 중 버려진 비율),
+  오염률(추출 영역 중 내용이 아닌 비율). `full_page_ocr`·`oracle` 기준선이 같은 표에 들어갑니다.
+- **검출 지표** — per-class AP@0.5 / AP@0.5:0.95, mAP, 혼동행렬. COCO 관례이며 `pycocotools`와
+  대조 검증돼 있습니다.
+
+주의: 평가용 예측은 conf **0.001**로 생성하고(PR 곡선 recall 꼬리 보존), 운영 지표와 혼동행렬만
+작동점 **0.25**를 씁니다. 이 둘을 같은 값으로 두면 AP가 체계적으로 과소평가됩니다.
 
 ## API 엔드포인트
 
