@@ -198,6 +198,15 @@ class YoloExportResult(BaseModel):
     train_count: int
     val_count: int
     page_count: int
+    test_txt: str | None = None
+    test_count: int = 0
+    # Canonical class ids actually written, so a dataset can be checked against
+    # the catalogue after the fact.
+    class_ids: dict[str, int] = Field(default_factory=dict)
+    dataset_fingerprint: str | None = None
+    skipped_incomplete_pages: int = 0
+    dropped_boxes: int = 0
+    warnings: list[str] = Field(default_factory=list)
 
 
 class SplitSummary(BaseModel):
