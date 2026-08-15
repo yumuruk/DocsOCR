@@ -20,6 +20,9 @@ const LABELS = [
   "target_data",
 ];
 
+// Plate colours. These are the only saturated colours in the UI; everything
+// else is achromatic so that colour always means "this is a detected region".
+// Drawn over the white page image, so they need no dark-theme variant.
 const COLORS = {
   title: "#2563eb",
   body: "#047857",
@@ -32,6 +35,14 @@ const COLORS = {
   footer: "#64748b",
   ignore: "#be123c",
   target_data: "#db2777",
+  // DocStructBench class names emitted by the pretrained checkpoint. Captions use
+  // a lighter shade of the class they caption; skipped furniture recedes.
+  abandon: "#94a3b8",
+  figure_caption: "#8b5cf6",
+  table_caption: "#d97706",
+  table_footnote: "#f59e0b",
+  isolate_formula: "#0d9488",
+  formula_caption: "#2dd4bf",
   manual: "#111827",
 };
 
