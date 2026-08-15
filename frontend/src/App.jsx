@@ -122,11 +122,14 @@ export default function App() {
 
   function handlePointerMove(event) {
     if (!drawing) return;
+    // Read the point before handing it to the updater: React clears
+    // `currentTarget` once the handler returns, and the updater runs later.
+    const point = getSvgPoint(event.currentTarget, event);
     setDrawing((current) => {
       if (!current) return current;
       return {
         ...current,
-        current: getSvgPoint(event.currentTarget, event),
+        current: point,
       };
     });
   }
