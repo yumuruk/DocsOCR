@@ -80,6 +80,17 @@ DEFAULT_LABEL_POLICIES: dict[str, LabelPolicy] = {
     "footer": LabelPolicy(label="footer", action=ExtractionAction.SKIP, description="Repeating footer"),
     "ignore": LabelPolicy(label="ignore", action=ExtractionAction.SKIP, description="Explicitly ignored region"),
     "target_data": LabelPolicy(label="target_data", action=ExtractionAction.OCR, description="High priority target data"),
+    # DocStructBench class names, emitted as-is by the pretrained DocLayout-YOLO
+    # checkpoint. Without an entry here they fall through to the OCR default in
+    # `pipeline.build_policies`, which means `abandon` -- running heads, page
+    # numbers, the arXiv stamp -- gets extracted instead of discarded. Actions
+    # follow the same judgement as `labels.DOCSTRUCTBENCH_TO_CANONICAL`.
+    "abandon": LabelPolicy(label="abandon", action=ExtractionAction.SKIP, description="DocStructBench discardable furniture (running head, page number)"),
+    "figure_caption": LabelPolicy(label="figure_caption", action=ExtractionAction.OCR, description="Figure caption prose"),
+    "table_caption": LabelPolicy(label="table_caption", action=ExtractionAction.OCR, description="Table caption prose"),
+    "table_footnote": LabelPolicy(label="table_footnote", action=ExtractionAction.OCR, description="Table footnote prose"),
+    "isolate_formula": LabelPolicy(label="isolate_formula", action=ExtractionAction.SKIP, description="Display formula; OCR cannot read it"),
+    "formula_caption": LabelPolicy(label="formula_caption", action=ExtractionAction.OCR, description="Formula caption/number"),
 }
 
 
