@@ -2,46 +2,159 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Tokens are RGB triplets so Tailwind's <alpha-value> syntax keeps working
+ * (see tailwind.config.js). Every colour in the UI resolves through these, so
+ * the dark theme is a token swap rather than a second set of rules.
+ *
+ * The chrome is deliberately achromatic: the only saturated colour on screen
+ * belongs to the detected layout regions, which are drawn on the page image.
+ * The one exception is `danger`, reserved for failures.
+ */
 @layer base {
+  :root {
+    /* Native controls (file button, select, checkbox, scrollbars) follow this,
+       not our tokens -- without it they stay light on the dark ground. */
+    color-scheme: light;
+    --paper: 234 238 243;
+    --surface: 255 255 255;
+    --raised: 244 247 250;
+    --line: 215 223 232;
+    --line-strong: 190 201 213;
+    --ink: 15 21 28;
+    --muted: 88 100 111;
+    --faint: 139 150 162;
+    --action: 15 21 28;
+    --action-ink: 255 255 255;
+    --ring: 100 130 170;
+    --danger: 180 35 24;
+    --danger-bg: 254 242 242;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --paper: 12 17 22;
+      --surface: 20 27 34;
+      --raised: 26 34 43;
+      --line: 41 50 60;
+      --line-strong: 62 74 87;
+      --ink: 232 238 244;
+      --muted: 151 163 175;
+      --faint: 106 118 129;
+      --action: 232 238 244;
+      --action-ink: 12 17 22;
+      --ring: 125 155 195;
+      --danger: 249 112 102;
+      --danger-bg: 44 20 20;
+    }
+  }
+
   * {
     box-sizing: border-box;
   }
 
   html {
-    background: #f1f5f9;
+    background: rgb(var(--paper));
   }
 
   body {
     margin: 0;
     min-width: 320px;
     min-height: 100vh;
-    font-family:
-      Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-      sans-serif;
+    background: rgb(var(--paper));
+    color: rgb(var(--ink));
+    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+      "Segoe UI Variable", "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
 
   button,
   input,
   select {
     font: inherit;
+    color: inherit;
+  }
+
+  :focus-visible {
+    outline: 2px solid rgb(var(--ring));
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 }
 
 @layer components {
+  /* Uppercase tracked mono label. The tool measures things; its labels read
+     like instrument markings rather than prose. */
+  .eyebrow {
+    @apply font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-faint;
+  }
+
+  .panel {
+    @apply rounded-lg border border-line bg-surface;
+  }
+
   .input {
-    @apply h-9 w-full rounded-md border border-slate-200 bg-white px-2.5 text-sm font-medium text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-100;
+    @apply h-9 w-full rounded-md border border-line bg-raised px-2.5 font-mono text-[13px] text-ink outline-none transition;
+  }
+
+  .input:hover:not(:disabled) {
+    @apply border-line-strong;
+  }
+
+  .input:disabled {
+    @apply cursor-not-allowed text-faint opacity-60;
   }
 
   .primary-button {
-    @apply inline-flex h-10 items-center justify-center gap-2 rounded-md border border-blue-600 bg-blue-600 px-3 text-sm font-bold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60;
+    @apply inline-flex h-10 w-full items-center justify-center gap-2 rounded-md bg-action px-3 text-sm font-semibold text-action-ink transition;
+  }
+
+  .primary-button:hover:not(:disabled) {
+    @apply opacity-90;
+  }
+
+  .primary-button:disabled {
+    @apply cursor-not-allowed opacity-40;
   }
 
   .secondary-button {
-    @apply inline-flex h-9 items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-bold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex h-9 items-center justify-center gap-2 rounded-md border border-line bg-surface px-3 text-[13px] font-semibold text-ink transition;
+  }
+
+  .secondary-button:hover:not(:disabled) {
+    @apply border-line-strong bg-raised;
+  }
+
+  .secondary-button:disabled {
+    @apply cursor-not-allowed opacity-40;
   }
 
   .output-link {
-    @apply inline-flex items-center gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold text-blue-600 no-underline transition hover:border-blue-200 hover:bg-blue-50;
+    @apply inline-flex items-center gap-2 rounded-md border border-line bg-raised px-3 py-2 font-mono text-[13px] text-ink no-underline transition;
+  }
+
+  .output-link:hover {
+    @apply border-line-strong;
+  }
+
+  /* Region colour chip. A swatch beside ink-coloured text, not a filled pill:
+     the region palette spans 17 hues and several of them cannot carry white
+     text at an accessible contrast. */
+  .swatch {
+    @apply inline-block h-2.5 w-2.5 shrink-0 rounded-[2px] ring-1 ring-inset ring-black/20;
+  }
+
+  .metric {
+    @apply font-mono text-[22px] font-medium leading-none tabular-nums text-ink;
   }
 }
-
