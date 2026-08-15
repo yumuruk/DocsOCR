@@ -159,6 +159,9 @@ export default function App() {
   function handlePointerDown(event, page) {
     if (!drawMode) return;
     const start = getSvgPoint(event.currentTarget, event);
+    // No transform yet means no usable origin, so never begin a drag that would
+    // have to guess where it started.
+    if (!start) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     setDrawing({
       pageNumber: page.page_number,
@@ -172,6 +175,9 @@ export default function App() {
     // Read the point before handing it to the updater: React clears
     // `currentTarget` once the handler returns, and the updater runs later.
     const point = getSvgPoint(event.currentTarget, event);
+    // Hold the last good position rather than dropping the drag; the next move
+    // event recovers it.
+    if (!point) return;
     setDrawing((current) => {
       if (!current) return current;
       return {
@@ -183,9 +189,14 @@ export default function App() {
 
   function handlePointerUp(event, page) {
     if (!drawing || drawing.pageNumber !== page.page_number) return;
-    const end = getSvgPoint(event.currentTarget, event);
-    const bbox = clampBox(normalizeBox(drawing.start, end), page.width, page.height);
+    // Fall back to the last position the move handler managed to map. `start` and
+    // `current` are non-null for as long as `drawing` exists, because pointer-down
+    // refuses to start a drag without a transform, so the fallback is always a
+    // real point. Clearing `drawing` is unconditional: returning early would leave
+    // the rubber band on screen with no pointer attached to it.
+    const end = getSvgPoint(event.currentTarget, event) ?? drawing.current;
     setDrawing(null);
+    const bbox = clampBox(normalizeBox(drawing.start, end), page.width, page.height);
 
     if (bbox.width < 8 || bbox.height < 8) return;
     setAnnotations((items) => [
@@ -766,11 +777,19 @@ function getDisplayWidth(page, zoom) {
   return Math.max(320, page.width * Number(zoom || 1));
 }
 
+// Returns null when the pointer cannot be mapped into page coordinates.
+// getScreenCTM() has no matrix to give while the SVG is unrendered -- not yet laid
+// out, or inside a collapsed container -- and returns null, so the transform has
+// to be treated as unavailable rather than assumed. Callers must handle null; a
+// dropped point is recoverable, a thrown one kills the drag.
 function getSvgPoint(svg, event) {
+  if (!svg) return null;
+  const matrix = svg.getScreenCTM();
+  if (!matrix) return null;
   const point = svg.createSVGPoint();
   point.x = event.clientX;
   point.y = event.clientY;
-  return point.matrixTransform(svg.getScreenCTM().inverse());
+  return point.matrixTransform(matrix.inverse());
 }
 
 function normalizeBox(start, end) {
