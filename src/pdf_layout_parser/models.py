@@ -334,6 +334,13 @@ class TrainingConfig(BaseModel):
     patience: int = 100
     exist_ok: bool = True
     dry_run: bool = False
+    # Replicate identity. Small-n cells have more seed variance than effect size,
+    # so every result must say which seed produced it; doclayout_yolo's implicit
+    # default (0) was neither controllable nor recorded.
+    seed: int = 0
+    # Number of leading layers to freeze (ultralytics `freeze`), for the
+    # backbone-freeze arm of the method screening. None trains everything.
+    freeze: int | None = None
 
 
 class TrainingResult(BaseModel):
@@ -347,6 +354,14 @@ class TrainingResult(BaseModel):
     command_preview: str
     metrics: JsonDict = Field(default_factory=dict)
     error: str | None = None
+    seed: int = 0
+    freeze: int | None = None
+    # The exact kwargs passed to YOLOv10.train() -- the preview above is rendered
+    # from this same dict, so what is recorded is what ran (NFR-005).
+    train_kwargs: JsonDict = Field(default_factory=dict)
+    duration_seconds: float | None = None
+    result_path: str | None = None
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ExperimentResult(BaseModel):

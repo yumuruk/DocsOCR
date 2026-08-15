@@ -287,6 +287,8 @@ def add_training_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--workers", type=int, default=0)
     parser.add_argument("--learning-rate", type=float, default=0.02)
     parser.add_argument("--run-name", default="doclayout_finetune")
+    parser.add_argument("--seed", type=int, default=0, help="Training seed; small-n cells need 3-seed replicates")
+    parser.add_argument("--freeze", type=int, help="Freeze the first N layers (backbone-freeze experiment arm)")
     parser.add_argument("--dry-run", action="store_true")
 
 
@@ -303,6 +305,8 @@ def training_config_from_args(args: argparse.Namespace, data_yaml: Path, output_
         device=args.device,
         workers=args.workers,
         learning_rate=args.learning_rate,
+        seed=args.seed,
+        freeze=args.freeze,
         dry_run=args.dry_run,
     )
 
