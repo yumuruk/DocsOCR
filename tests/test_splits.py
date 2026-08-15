@@ -21,6 +21,26 @@ from pdf_layout_parser.splits import (
 )
 
 
+def make_corpus(spec: dict[str, int]) -> list[AnnotationPage]:
+    """Pages for documents of explicitly uneven sizes, e.g. {"manual": 60, "a": 8}."""
+    pages = []
+    for document_id, page_count in spec.items():
+        for page_index in range(page_count):
+            pages.append(
+                AnnotationPage(
+                    image_path=f"runs/{document_id}/pages/page_{page_index + 1:04d}.png",
+                    width=1240,
+                    height=1754,
+                    document_id=document_id,
+                    page_number=page_index + 1,
+                    annotations=[
+                        AnnotationBox(label="body", bbox=BoundingBox(x=0, y=0, width=100, height=100))
+                    ],
+                )
+            )
+    return pages
+
+
 def make_pages(document_count: int, pages_per_document: int) -> list[AnnotationPage]:
     pages = []
     for document_index in range(document_count):
@@ -136,6 +156,51 @@ class SplitTests(unittest.TestCase):
             summary.train_pages + summary.val_pages + summary.test_pages, 20
         )
         self.assertTrue(summary.test_documents)
+
+
+class UnevenCorpusTests(unittest.TestCase):
+    """The realistic corpus shape: one long manual plus a few short documents.
+
+    The previous allocator filled test, then val, and gave train the leftovers,
+    so this shape either emptied train entirely (SplitError on half the seeds)
+    or sent the manual to test. These tests pin the repaired behaviour: every
+    seed must produce a usable, non-empty, leak-free split with train holding
+    the bulk of the pages.
+    """
+
+    CORPUS = {"manual": 60, "a": 8, "b": 6, "c": 5, "d": 4, "e": 3}
+
+    def test_every_seed_splits_without_error(self):
+        for seed in range(20):
+            with self.subTest(seed=seed):
+                splits = make_splits(make_corpus(self.CORPUS), seed=seed)
+                assert_no_leak(splits)
+                self.assertTrue(splits.train and splits.val and splits.test)
+
+    def test_the_large_document_lands_in_train(self):
+        """Size-descending placement: the manual must seed train, not test."""
+        for seed in range(10):
+            splits = make_splits(make_corpus(self.CORPUS), seed=seed)
+            train_documents = {document_id_for(page) for page in splits.train}
+            self.assertIn("manual", train_documents, f"seed={seed}")
+
+    def test_train_holds_enough_pages_for_the_label_efficiency_curve(self):
+        """The n=50 cell needs 50 train pages; the old allocator left 3-12."""
+        splits = make_splits(make_corpus(self.CORPUS), seed=0)
+        self.assertGreaterEqual(len(splits.train_pool), 50)
+
+    def test_extreme_imbalance_warns_instead_of_failing(self):
+        corpus = {"big": 100, **{f"s{index}": 1 for index in range(6)}}
+        splits = make_splits(make_corpus(corpus), seed=0)
+        self.assertTrue(splits.train and splits.val and splits.test)
+        self.assertTrue(
+            any("imbalance" in warning or "uneven" in warning for warning in splits.warnings),
+            splits.warnings,
+        )
+
+    def test_zero_ratio_is_rejected(self):
+        with self.assertRaises(SplitError):
+            make_splits(make_pages(4, 3), seed=0, val_ratio=0.0)
 
 
 class NestedSamplingTests(unittest.TestCase):

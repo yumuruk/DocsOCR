@@ -124,8 +124,8 @@ def make_splits(
     corpus genuinely is a single document; it leaks layout similarity and says so
     in ``warnings``.
     """
-    if not 0.0 <= test_ratio < 1.0 or not 0.0 <= val_ratio < 1.0:
-        raise SplitError("test_ratio and val_ratio must each be in [0, 1)")
+    if not 0.0 < test_ratio < 1.0 or not 0.0 < val_ratio < 1.0:
+        raise SplitError("test_ratio and val_ratio must each be in (0, 1)")
     if test_ratio + val_ratio >= 1.0:
         raise SplitError("test_ratio + val_ratio must leave pages for training")
 
@@ -157,43 +157,81 @@ def make_splits(
             "strategy='page' and accept that train/test share a document."
         )
 
+    # Placement order is size-descending so the largest documents are placed
+    # while every split still has room -- a big document lands in the split with
+    # the biggest deficit (usually train) instead of blowing past whichever
+    # target a shuffled order happened to be filling. The previous version
+    # filled test, then val, then gave train the leftovers, so a corpus like one
+    # 60-page manual plus a few short documents either emptied train entirely or
+    # sent the manual to test.
+    #
+    # The seed breaks ties among equal-size documents. For documents of distinct
+    # sizes the assignment is therefore stable across seeds -- deliberately: the
+    # protocol wants ONE frozen test set, and the seed's job is tie-breaking and
+    # downstream sampling, not reshuffling what "held-out" means every run.
     shuffled = list(document_ids)
     random.Random(seed).shuffle(shuffled)
+    shuffle_rank = {document_id: index for index, document_id in enumerate(shuffled)}
+    placement_order = sorted(
+        document_ids, key=lambda d: (-len(grouped[d]), shuffle_rank[d])
+    )
 
     total_pages = len(usable)
-    test_target = test_ratio * total_pages
-    val_target = val_ratio * total_pages
+    targets = {
+        "train": (1.0 - test_ratio - val_ratio) * total_pages,
+        "test": test_ratio * total_pages,
+        "val": val_ratio * total_pages,
+    }
+    counts = {"train": 0, "test": 0, "val": 0}
+    documents: dict[str, list[str]] = {"train": [], "val": [], "test": []}
 
-    assignment: dict[str, str] = {}
-    test_count = 0
-    val_count = 0
-    for document_id in shuffled:
-        size = len(grouped[document_id])
-        if test_count < test_target:
-            assignment[document_id] = "test"
-            test_count += size
-        elif val_count < val_target:
-            assignment[document_id] = "val"
-            val_count += size
-        else:
-            assignment[document_id] = "train"
+    # Each document goes to the relatively most under-filled split. Ties resolve
+    # train -> test -> val, matching target size, so the first (largest) document
+    # tends to seed train.
+    for document_id in placement_order:
+        chosen = min(("train", "test", "val"), key=lambda n: counts[n] / targets[n])
+        documents[chosen].append(document_id)
+        counts[chosen] += len(grouped[document_id])
+
+    # Repair: with >= 3 documents every split can and must be non-empty. Move the
+    # smallest document out of the most populated split until that holds.
+    repaired = False
+    for name in ("train", "test", "val"):
+        if documents[name]:
+            continue
+        donor = max(
+            (other for other in ("train", "test", "val") if len(documents[other]) >= 2),
+            key=lambda n: len(documents[n]),
+        )
+        moved = min(documents[donor], key=lambda d: (len(grouped[d]), d))
+        documents[donor].remove(moved)
+        documents[name].append(moved)
+        counts[donor] -= len(grouped[moved])
+        counts[name] += len(grouped[moved])
+        repaired = True
+    if repaired:
+        warnings.append(
+            "Document sizes are too uneven to honour the requested ratios; at least one "
+            "split had to be seeded with a single document. Check the split summary "
+            "before trusting comparisons."
+        )
+
+    # Loud, not fatal: a heavily skewed corpus still splits, but the caller is
+    # told the achieved ratios are far from the requested ones.
+    for name in ("train", "test", "val"):
+        deviation = abs(counts[name] - targets[name])
+        if targets[name] > 0 and deviation / total_pages > 0.15:
+            warnings.append(
+                f"Split {name!r} holds {counts[name]} page(s) against a target of "
+                f"{targets[name]:.1f} -- document size imbalance prevents a closer fit."
+            )
 
     buckets: dict[str, list[AnnotationPage]] = {"train": [], "val": [], "test": []}
-    documents: dict[str, list[str]] = {"train": [], "val": [], "test": []}
-    for document_id in shuffled:
-        target = assignment[document_id]
-        buckets[target].extend(grouped[document_id])
-        documents[target].append(document_id)
-
     for name in ("train", "val", "test"):
+        for document_id in documents[name]:
+            buckets[name].extend(grouped[document_id])
         documents[name].sort()
         buckets[name].sort(key=page_key)
-        if not buckets[name]:
-            raise SplitError(
-                f"Split {name!r} came out empty with seed={seed}, test_ratio={test_ratio}, "
-                f"val_ratio={val_ratio} over {len(document_ids)} documents. "
-                "Adjust the ratios or label more documents."
-            )
 
     splits = DatasetSplits(
         train=buckets["train"],
