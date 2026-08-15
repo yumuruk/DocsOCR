@@ -329,6 +329,15 @@ def evaluate(
     """Score predictions against ground truth and assemble a report."""
     started = time.perf_counter()
 
+    # Drop predictions for pages the ground truth does not cover BEFORE scoring.
+    # The operational metrics never saw them (they iterate GT pages), but the
+    # detection matcher counted every one as a false positive, so a cached
+    # prediction file covering more pages than the split silently deflated AP.
+    gt_page_ids = {page.image_id for page in ground_truth.pages}
+    off_split = [pred for pred in predictions if pred.image_id not in gt_page_ids]
+    if off_split:
+        predictions = [pred for pred in predictions if pred.image_id in gt_page_ids]
+
     detection = evaluate_detections(
         ground_truth.boxes,
         predictions,
@@ -357,11 +366,12 @@ def evaluate(
     )
 
     collected = [*ground_truth.warnings, *(notes or [])]
-    unmatched = sorted({pred.image_id for pred in predictions} - {page.image_id for page in ground_truth.pages})
-    if unmatched:
+    if off_split:
+        off_pages = sorted({pred.image_id for pred in off_split})
         collected.append(
-            f"{len(unmatched)} predicted page id(s) have no ground truth and were ignored by the "
-            f"operational metrics, e.g. {', '.join(unmatched[:3])}"
+            f"{len(off_split)} prediction(s) on {len(off_pages)} page(s) outside this split's "
+            f"ground truth were excluded before scoring (e.g. {', '.join(off_pages[:3])}). "
+            "They would otherwise count as false positives and deflate AP."
         )
     for entry in detection.per_class:
         if entry.gt_count == 0:

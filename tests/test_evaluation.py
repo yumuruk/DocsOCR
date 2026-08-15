@@ -649,6 +649,31 @@ class ReportTests(unittest.TestCase):
         # And the report says out loud why the other classes are null.
         self.assertTrue(any("no ground truth" in note for note in report.notes))
 
+    def test_predictions_outside_the_split_do_not_deflate_ap(self):
+        """A cached prediction file may cover more pages than the scored split.
+
+        Detection matching counts any prediction without a same-page GT as a
+        false positive, so before this filter a perfectly scored split reported
+        AP 0.5 just because the cache also held another page's boxes.
+        """
+        pages = [
+            AnnotationPage(
+                image_path="doc/pages/page_0001.png",
+                width=100,
+                height=100,
+                document_id="doc",
+                annotations=[AnnotationBox(label="body", bbox=box(0, 0, 50, 50))],
+            )
+        ]
+        ground_truth = load_ground_truth(pages=pages)
+        on_split = PredBox(ground_truth.pages[0].image_id, "body", box(0, 0, 50, 50), 0.9)
+        off_split = PredBox("otherdoc::page_0009.png", "body", box(0, 0, 50, 50), 0.95)
+
+        report = evaluate(ground_truth, [on_split, off_split], run_name="filtered")
+        self.assertAlmostEqual(report.detection.map50, 1.0)
+        self.assertEqual(report.pred_box_count, 1)
+        self.assertTrue(any("outside this split" in note for note in report.notes))
+
     def test_report_records_reproducibility_fields(self):
         pages = [
             AnnotationPage(
