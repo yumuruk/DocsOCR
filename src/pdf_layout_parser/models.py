@@ -368,3 +368,7 @@ class ExperimentResult(BaseModel):
     sample_size: int
     dataset: YoloExportResult
     training: TrainingResult
+    # Which held-out sets this cell shares with the other cells; comparability
+    # across N depends on val/test being identical, so it is recorded per cell.
+    split: SplitSummary | None = None
+    sample_seed: int | None = None

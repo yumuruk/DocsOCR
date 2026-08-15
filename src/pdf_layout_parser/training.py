@@ -5,8 +5,9 @@ import time
 from pathlib import Path
 from typing import Any
 
-from pdf_layout_parser.dataset import export_yolo_dataset
+from pdf_layout_parser.dataset import export_yolo_dataset, load_annotation_dataset
 from pdf_layout_parser.models import ExperimentResult, JsonDict, TrainingConfig, TrainingResult
+from pdf_layout_parser.splits import make_splits, with_train_sample
 
 
 def training_kwargs(config: TrainingConfig) -> JsonDict:
@@ -200,29 +201,65 @@ def run_page_count_experiments(
     output_dir: Path,
     sample_sizes: list[int],
     training_config: TrainingConfig,
-    train_ratio: float = 0.8,
+    split_seed: int = 0,
+    sample_seed: int = 0,
+    test_ratio: float = 0.35,
+    val_ratio: float = 0.15,
+    split_strategy: str = "document",
     run_training: bool = False,
 ) -> list[ExperimentResult]:
-    results: list[ExperimentResult] = []
-    output_dir.mkdir(parents=True, exist_ok=True)
+    """Label-efficiency experiment: one cell per sample size.
 
-    for sample_size in sample_sizes:
+    The splits are made ONCE and every cell shares the same val and test sets;
+    only the train set changes, by nested sampling (N=10 pages are a subset of
+    N=20's). The previous version re-split a "first N pages" prefix per cell, so
+    each N was validated on different pages and the resulting curve compared
+    nothing with nothing (FINDINGS C2). Datasets are exported with strict=True:
+    if the corpus cannot be split safely, the experiment refuses to start rather
+    than producing incomparable cells.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    pages = load_annotation_dataset(annotation_path).pages
+    base_splits = make_splits(
+        pages,
+        seed=split_seed,
+        test_ratio=test_ratio,
+        val_ratio=val_ratio,
+        strategy=split_strategy,
+    )
+
+    results: list[ExperimentResult] = []
+    for sample_size in sorted(sample_sizes):
+        cell_splits = with_train_sample(base_splits, sample_size, seed=sample_seed)
         dataset_dir = output_dir / f"pages_{sample_size}" / "dataset"
         dataset = export_yolo_dataset(
             annotation_path=annotation_path,
             output_dir=dataset_dir,
-            max_pages=sample_size,
-            train_ratio=train_ratio,
+            splits=cell_splits,
+            strict=True,
         )
         config = training_config.model_copy(
             update={
                 "data_yaml": Path(dataset.data_yaml),
                 "output_dir": output_dir / f"pages_{sample_size}" / "training",
-                "run_name": f"doclayout_pages_{sample_size}",
+                "run_name": f"doclayout_pages_{sample_size}_seed{training_config.seed}",
                 "dry_run": training_config.dry_run or not run_training,
             }
         )
         training = run_doclayout_yolo_training(config)
-        results.append(ExperimentResult(sample_size=sample_size, dataset=dataset, training=training))
+        results.append(
+            ExperimentResult(
+                sample_size=sample_size,
+                dataset=dataset,
+                training=training,
+                split=cell_splits.summary(),
+                sample_seed=sample_seed,
+            )
+        )
 
+    manifest = output_dir / "experiments.json"
+    manifest.write_text(
+        json.dumps([result.model_dump(mode="json") for result in results], ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     return results

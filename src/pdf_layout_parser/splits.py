@@ -316,6 +316,35 @@ def assert_no_leak(splits: DatasetSplits) -> None:
             seen[page.image_path] = name
 
 
+def with_train_sample(
+    splits: DatasetSplits,
+    sample_size: int,
+    seed: int = 0,
+) -> DatasetSplits:
+    """One label-efficiency cell: N sampled train pages, val and test untouched.
+
+    Every cell built from the same base splits shares val and test verbatim --
+    that shared held-out set is what makes points on the N-page curve comparable
+    at all (FINDINGS C2). Only train shrinks, by nested sampling.
+    """
+    sampled = sample_train_pages(splits.train_pool, sample_size, seed=seed)
+    cell = DatasetSplits(
+        train=sampled,
+        val=list(splits.val),
+        test=list(splits.test),
+        seed=splits.seed,
+        strategy=f"{splits.strategy}, train sampled to {sample_size} (seed {seed})",
+        documents={
+            "train": sorted({document_id_for(page) for page in sampled}),
+            "val": list(splits.documents.get("val", [])),
+            "test": list(splits.documents.get("test", [])),
+        },
+        warnings=list(splits.warnings),
+    )
+    assert_no_leak(cell)
+    return cell
+
+
 def sample_train_pages(
     pool: list[AnnotationPage],
     sample_size: int,

@@ -90,5 +90,108 @@ class DryRunRecordTests(unittest.TestCase):
         self.assertFalse(tuned.warnings)
 
 
+class PageCountExperimentTests(unittest.TestCase):
+    """Dry-run the experiment loop with real images: dataset export is not mocked."""
+
+    def _corpus(self, root: Path) -> Path:
+        pages = []
+        for doc_index in range(6):
+            for page_index in range(4):
+                image_path = root / f"doc{doc_index}_p{page_index}.png"
+                Image.new("RGB", (100, 200), "white").save(image_path)
+                pages.append(
+                    AnnotationPage(
+                        image_path=str(image_path),
+                        width=100,
+                        height=200,
+                        document_id=f"doc{doc_index}",
+                        page_number=page_index + 1,
+                        annotations=[
+                            AnnotationBox(label="body", bbox=BoundingBox(x=0, y=0, width=50, height=50))
+                        ],
+                    )
+                )
+        annotation_path = root / "annotations.json"
+        annotation_path.write_text(
+            '{"labels": ["body"], "pages": [%s]}'
+            % ",".join(page.model_dump_json() for page in pages),
+            encoding="utf-8",
+        )
+        return annotation_path
+
+    def test_cells_share_val_and_test_and_nest_train(self):
+        """The C2 regression: every N must be scored against the same held-out
+        pages, and N=2's train pages must be a subset of N=4's."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            results = run_page_count_experiments(
+                annotation_path=self._corpus(root),
+                output_dir=root / "exp",
+                sample_sizes=[4, 2],
+                training_config=make_config(output_dir=root / "unused"),
+                split_seed=0,
+                sample_seed=0,
+            )
+
+            by_size = {result.sample_size: result for result in results}
+            val_2 = Path(by_size[2].dataset.val_txt).read_text(encoding="utf-8")
+            val_4 = Path(by_size[4].dataset.val_txt).read_text(encoding="utf-8")
+            test_2 = Path(by_size[2].dataset.test_txt).read_text(encoding="utf-8")
+            test_4 = Path(by_size[4].dataset.test_txt).read_text(encoding="utf-8")
+            self.assertEqual(val_2, val_4)
+            self.assertEqual(test_2, test_4)
+
+            train_2 = set(Path(by_size[2].dataset.train_txt).read_text(encoding="utf-8").split())
+            train_4 = set(Path(by_size[4].dataset.train_txt).read_text(encoding="utf-8").split())
+            self.assertEqual(len(train_2), 2)
+            self.assertEqual(len(train_4), 4)
+            # Listings are copies named per dataset; compare source page identity.
+            names_2 = {name.split("/")[-1] for name in train_2}
+            names_4 = {name.split("/")[-1] for name in train_4}
+            self.assertTrue(names_2.issubset(names_4))
+
+    def test_cells_record_split_and_seed_in_run_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            results = run_page_count_experiments(
+                annotation_path=self._corpus(root),
+                output_dir=root / "exp",
+                sample_sizes=[2],
+                training_config=make_config(output_dir=root / "unused", seed=3),
+            )
+        result = results[0]
+        self.assertEqual(result.training.run_name, "doclayout_pages_2_seed3")
+        self.assertIsNotNone(result.split)
+        self.assertEqual(result.split.train_pages, 2)
+        self.assertEqual(result.sample_seed, 0)
+
+    def test_manifest_is_written(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_page_count_experiments(
+                annotation_path=self._corpus(root),
+                output_dir=root / "exp",
+                sample_sizes=[2],
+                training_config=make_config(output_dir=root / "unused"),
+            )
+            manifest = json.loads((root / "exp" / "experiments.json").read_text(encoding="utf-8"))
+        self.assertEqual(len(manifest), 1)
+        self.assertEqual(manifest[0]["sample_size"], 2)
+        self.assertEqual(manifest[0]["training"]["status"], "dry_run")
+
+    def test_oversized_sample_refuses_up_front(self):
+        """Asking for more train pages than the pool holds must fail before any
+        cell trains, not silently shrink the cell."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaises(Exception):
+                run_page_count_experiments(
+                    annotation_path=self._corpus(root),
+                    output_dir=root / "exp",
+                    sample_sizes=[500],
+                    training_config=make_config(output_dir=root / "unused"),
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

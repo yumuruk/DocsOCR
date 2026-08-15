@@ -57,8 +57,15 @@ def main() -> None:
     experiment_parser.add_argument("annotations", type=Path)
     experiment_parser.add_argument("output_dir", type=Path)
     experiment_parser.add_argument("--sample-sizes", default="10,20,50")
-    experiment_parser.add_argument("--train-ratio", type=float, default=0.8)
     experiment_parser.add_argument("--train", action="store_true", help="Actually run training; default only prepares datasets")
+    # Cells share one document-level split; only train is subsampled per N.
+    # There is intentionally no --train-ratio here any more: a per-N re-split is
+    # exactly the defect (C2) that made the old curves incomparable.
+    experiment_parser.add_argument("--split-seed", type=int, default=0)
+    experiment_parser.add_argument("--sample-seed", type=int, default=0)
+    experiment_parser.add_argument("--test-ratio", type=float, default=0.35)
+    experiment_parser.add_argument("--val-ratio", type=float, default=0.15)
+    experiment_parser.add_argument("--split-strategy", choices=["document", "page"], default="document")
     add_training_args(experiment_parser)
 
     evaluate_parser = subparsers.add_parser(
@@ -174,10 +181,31 @@ def main() -> None:
             output_dir=args.output_dir,
             sample_sizes=sample_sizes,
             training_config=config,
-            train_ratio=args.train_ratio,
+            split_seed=args.split_seed,
+            sample_seed=args.sample_seed,
+            test_ratio=args.test_ratio,
+            val_ratio=args.val_ratio,
+            split_strategy=args.split_strategy,
             run_training=args.train,
         )
-        print(json.dumps([result.model_dump(mode="json") for result in results], ensure_ascii=False))
+        print(
+            json.dumps(
+                {
+                    "manifest": str(args.output_dir / "experiments.json"),
+                    "cells": [
+                        {
+                            "sample_size": result.sample_size,
+                            "run_name": result.training.run_name,
+                            "status": result.training.status,
+                            "result_path": result.training.result_path,
+                            "dataset_fingerprint": result.dataset.dataset_fingerprint,
+                        }
+                        for result in results
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        )
     elif args.command == "evaluate":
         print(json.dumps(run_evaluate(args), ensure_ascii=False))
     elif args.command == "compare":
