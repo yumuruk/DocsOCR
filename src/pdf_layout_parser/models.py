@@ -200,6 +200,17 @@ class YoloExportResult(BaseModel):
     page_count: int
 
 
+class SplitSummary(BaseModel):
+    seed: int
+    strategy: str
+    train_pages: int
+    val_pages: int
+    test_pages: int
+    train_documents: list[str] = Field(default_factory=list)
+    val_documents: list[str] = Field(default_factory=list)
+    test_documents: list[str] = Field(default_factory=list)
+
+
 class ParseRequestOptions(BaseModel):
     detector: Literal["heuristic", "doclayout-yolo"] = "heuristic"
     model_path: Path | None = None
