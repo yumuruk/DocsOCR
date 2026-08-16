@@ -347,7 +347,7 @@ export default function App() {
       page.regions.map((region) => ({
         id: id++,
         page_number: page.page_number,
-        label: region.label,
+        label: canonicalizePrediction(region.label, region.bbox, page.height),
         bbox: {
           x: region.bbox.x,
           y: region.bbox.y,
@@ -1263,6 +1263,34 @@ function readableError(caught) {
 function getDisplayWidth(page, zoom) {
   if (zoom === "fit") return Math.min(page.width, 680);
   return Math.max(320, page.width * Number(zoom || 1));
+}
+
+// DocStructBench class names -> the canonical labels the annotator corrects in.
+// Mirrors labels.DOCSTRUCTBENCH_TO_CANONICAL on the Python side; without this,
+// every preloaded box arrives as "plain text"/"table_caption"/... and the
+// annotator renames dozens of boxes per page by hand.
+const PREDICTION_LABEL_MAP = {
+  "plain text": "body",
+  figure_caption: "body",
+  table_caption: "body",
+  table_footnote: "body",
+  formula_caption: "body",
+  isolate_formula: "figure",
+};
+
+// `abandon` is DocStructBench's one bucket for all discardable furniture. The
+// evaluation mapping folds it into `ignore` (a mapping table cannot split one
+// label into three), but here a HUMAN verifies every box afterwards, so a
+// position heuristic may pre-sort it: top band -> header, bottom band ->
+// footer. Wrong guesses cost one relabel click; right ones cost nothing.
+function canonicalizePrediction(label, bbox, pageHeight) {
+  if (label === "abandon") {
+    const centerY = bbox.y + bbox.height / 2;
+    if (centerY < pageHeight * 0.2) return "header";
+    if (centerY > pageHeight * 0.8) return "footer";
+    return "ignore";
+  }
+  return PREDICTION_LABEL_MAP[label] || label;
 }
 
 // Returns null when the pointer cannot be mapped into page coordinates.
