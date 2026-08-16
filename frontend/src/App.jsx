@@ -70,7 +70,11 @@ const ZOOM_OPTIONS = [
 export default function App() {
   const [file, setFile] = useState(null);
   const [detector, setDetector] = useState("doclayout-yolo");
-  const [maxPages, setMaxPages] = useState("3");
+  // Empty = parse every page. The labelling bundles ARE exactly the pages to
+  // label, so the page count is decided by the uploaded file, not by a knob a
+  // person has to remember to raise; the old default of 3 silently truncated a
+  // 15-page bundle. Set a number only to preview the head of a large PDF.
+  const [maxPages, setMaxPages] = useState("");
   const [modelPath, setModelPath] = useState(DEFAULT_DOCLAYOUT_MODEL);
   const [device, setDevice] = useState("cpu");
   const [runOcr, setRunOcr] = useState(true);
@@ -530,6 +534,7 @@ export default function App() {
                     className="input tabular-nums"
                     min="1"
                     max="300"
+                    placeholder="all"
                     type="number"
                     value={maxPages}
                     onChange={(event) => setMaxPages(event.target.value)}
