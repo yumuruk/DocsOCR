@@ -321,6 +321,82 @@ uv run pdf-layout-parser parse ./sample.pdf ^
   --device cuda:0
 ```
 
+## 실험 설계
+
+**목표**: 장르를 가리지 않고(영수증·양식·논문·매뉴얼·회의록·데이터시트) 문서에서
+**내용(title/body/table)만 vector DB에 넣고 잡동사니(header/footer/figure/ignore)를
+걸러내는** 범용 분리기. 정본 8라벨 카탈로그(`labels.py`)를 그대로 쓰고, `target_data`는
+필드 추출 라운드로 이월한다.
+
+핵심 판단: 내용/잡동사니 분리는 저수준 단서로 결정되는 거친 과제라 사전학습 모델이
+이미 상당 부분 해낼 수 있다. 따라서 **학습부터 하지 않고, zero-shot이 어디까지
+충분한지 먼저 실측한 뒤(Phase A) 무너지는 곳에만 fine-tuning을 투입한다(Phase B)**.
+
+### Phase A — zero-shot 장르 실측 (학습 0회)
+
+질문: *DocStructBench zero-shot + 라벨 매핑 + 영역 정책만으로 어느 장르까지 충분한가?*
+
+**코퍼스** — docs-over-pages 원칙(장르당 문서 2개로는 "장르가 어렵다"와 "이 문서가
+유별나다"를 구분할 수 없으므로, 같은 예산에서 페이지 대신 문서 수를 늘린다):
+
+| 장르 | 문서 × 페이지 | 비고 |
+| --- | --- | --- |
+| receipt | 10 × 1 | 1페이지 문서 — 원칙의 순수형 |
+| ti-datasheet | 5 × 3 | 표 밀도 최고 |
+| form | 5 × 2 | 취약 후보 (문단 구조 아님) |
+| paper | 5 × 2 | zero-shot 홈그라운드 = **상한 기준선** |
+| minutes | 5 × 2 | 순수 텍스트 대표 |
+| manual | 5 × 3 | 실무 관련성 |
+| **합계** | **35문서 / 70페이지** | 페이지는 층화 추출 (첫 페이지 + 표 밀도 상위) |
+
+**절차**:
+
+```bash
+# 1. 라벨링 번들 생성 (장르당 통합 PDF 1개 + 페이지→문서 manifest)
+uv run python scripts/prepare_phase_a.py          # → runs/demo/phase-a/*.pdf
+
+# 2. 웹 라벨링: 번들 업로드 → Predictions(정본 라벨 초안) → 수정 → Labeled → Export
+
+# 3. document_id 재주입 (장르별 평가 파일 생성)
+uv run python scripts/merge_phase_a_exports.py --manifest runs/demo/phase-a/manifest.json \
+  --export receipt=... --export form=... --output runs/demo/phase-a/gt
+
+# 4. 장르별 zero-shot 채점 → 원장(docs/EXPERIMENTS.md)에 기록
+uv run pdf-layout-parser evaluate runs/demo/phase-a/gt/receipt.json runs/demo/phase-a/eval \
+  --run-name zeroshot-receipt --detector doclayout-yolo \
+  --model-path models/doclayout_yolo_docstructbench_imgsz1024.pt \
+  --label-mapping docstructbench --split all --tag genre=receipt --tag init=zeroshot
+```
+
+**읽기 규칙**: 유실률·오염률·절감률은 장르별로 읽는다(면적 기반이라 12페이지로 안정).
+per-class AP(특히 table)는 장르당 인스턴스가 ~14개뿐이므로 **전 장르 합산으로만** 읽는다.
+**판정 기준**: 유실률 상한(제안 2%)을 못 넘는 장르 = Phase B 대상.
+
+### Phase B — 무너진 곳만 fine-tuning
+
+- **라벨 효율 곡선**: 학습 페이지 0 / 1 / 5 / 10 / 15 / 30 / 50.
+  0 = zero-shot 기준선("기존 대비 얼마나 좋아지나"의 분모), 상단을 열어두는 이유는
+  포화 지점을 봐야 "몇 장이면 충분한가"에 답할 수 있기 때문.
+- **시드 3개 이상**: 작은 n에서는 어느 페이지를 뽑았는지가 결과를 좌우하므로 점당
+  3시드(표집+학습 시드, 분할 시드는 고정) 반복, 평균±범위로 보고. 6점 × 3시드 = 18회 학습.
+- **중첩 표집**: 1 ⊂ 5 ⊂ 10 ⊂ … (`splits.sample_train_pages`) — 페이지 수 효과와
+  뽑기 운을 분리.
+- **고정 테스트셋**: 학습 전에 라벨링하고 동결. 크기는 페이지가 아니라 **클래스당
+  인스턴스 수** 기준(AP 안정에 ~100개) — 관건 클래스 table이 페이지당 ~1.1개이므로
+  60~90페이지, 문서 12~15개에 분산.
+- **주의**: 단일 문서군으로만 학습하면 범용성이 훼손될 수 있다 — 범용이 목표면 장르
+  혼합 학습, 문서군 적응이 목표면 해당 문서군 학습.
+- **라벨 출처 축**: 순수 수동 / 무수정 예측(pseudo) / 예측+수정(HITL)을 `source`
+  태그로 구분해 "사람의 수정이 학습 데이터로서 얼마나 값진가"를 별도 비교.
+
+**보고 지표** (mAP만으로는 사업 질문에 답이 안 되므로 병행):
+`mAP@0.5`(모델 품질) · `절감률`(비용) · `유실률`(하드 제약) · `오염률`(노이즈) —
+전부 `full_page_ocr`(기존 방식)·`oracle`(상한)과 같은 표에서 비교.
+
+상세: 측정 규칙은 [docs/EVALUATION.md](docs/EVALUATION.md), 실측 원장은
+[docs/EXPERIMENTS.md](docs/EXPERIMENTS.md), 설계 경위와 결정 기록은
+[docs/RESEARCH_LOG.md](docs/RESEARCH_LOG.md).
+
 ## 평가 하네스
 
 모델 성능을 측정하고 실험을 기록하는 부분입니다. 측정 규칙 정의는
