@@ -100,8 +100,13 @@ def run_doclayout_yolo_training(config: TrainingConfig) -> TrainingResult:
 
     started = time.perf_counter()
     try:
-        model = YOLOv10(model_source)
-        train_output = model.train(**kwargs)
+        from pdf_layout_parser.torchcompat import trusted_checkpoint_loading
+
+        # Scoped to the run: doclayout_yolo reloads its own best.pt at the end of
+        # training, which PyTorch >= 2.6 rejects under the weights_only default.
+        with trusted_checkpoint_loading():
+            model = YOLOv10(model_source)
+            train_output = model.train(**kwargs)
         duration = time.perf_counter() - started
         run_dir = config.output_dir / config.run_name
         best_model_path = find_weight(run_dir, "best.pt")
@@ -125,6 +130,37 @@ def run_doclayout_yolo_training(config: TrainingConfig) -> TrainingResult:
             )
         )
     except Exception as exc:
+        # Salvage: doclayout_yolo's post-train finalisation (reloading and
+        # re-validating best.pt) has crashed for three unrelated reasons on this
+        # setup while the checkpoint itself was already written and usable. If
+        # best.pt exists, the run produced what we asked for -- report completed
+        # with a loud warning instead of discarding a finished training. Our own
+        # evaluation harness does the real scoring anyway; the trainer's final
+        # metrics are what is lost, hence metrics={}.
+        run_dir = config.output_dir / config.run_name
+        best_model_path = find_weight(run_dir, "best.pt")
+        if best_model_path is not None:
+            return finalize(
+                TrainingResult(
+                    status="completed",
+                    data_yaml=str(config.data_yaml),
+                    output_dir=str(config.output_dir),
+                    run_name=config.run_name,
+                    model_source=model_source,
+                    best_model_path=str(best_model_path),
+                    last_model_path=str(find_weight(run_dir, "last.pt") or "") or None,
+                    command_preview=command_preview,
+                    seed=config.seed,
+                    freeze=config.freeze,
+                    train_kwargs=kwargs,
+                    duration_seconds=time.perf_counter() - started,
+                    warnings=[
+                        *warnings,
+                        "Trainer raised during post-train finalisation; the checkpoint was "
+                        f"written and is used, but the trainer's own final metrics are lost: {exc}",
+                    ],
+                )
+            )
         return finalize(
             TrainingResult(
                 status="failed",

@@ -12,6 +12,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -88,6 +89,54 @@ class DryRunRecordTests(unittest.TestCase):
             tuned = run_doclayout_yolo_training(make_config(output_dir=Path(tmp)))
         self.assertTrue(any("FROM SCRATCH" in warning for warning in bare.warnings))
         self.assertFalse(tuned.warnings)
+
+
+class FinalisationSalvageTests(unittest.TestCase):
+    """doclayout_yolo's post-train finalisation (reloading best.pt for a last
+    validation pass) crashed three unrelated ways on this setup while the
+    checkpoint was already on disk. A finished training must not be reported as
+    failed because of a crash in that redundant step."""
+
+    def _run_with_fake_trainer(self, write_best: bool):
+        import contextlib
+        import types
+
+        fake = types.ModuleType("doclayout_yolo")
+
+        class FakeYOLOv10:
+            def __init__(self, source):
+                self.source = source
+
+            def train(self, **kwargs):
+                if write_best:
+                    weights = Path(kwargs["project"]) / kwargs["name"] / "weights"
+                    weights.mkdir(parents=True, exist_ok=True)
+                    (weights / "best.pt").write_bytes(b"w")
+                raise RuntimeError("'Conv' object has no attribute 'bn'")
+
+        fake.YOLOv10 = FakeYOLOv10
+        with tempfile.TemporaryDirectory() as tmp:
+            config = make_config(output_dir=Path(tmp), dry_run=False)
+            # Bypass the torch-load shim: importing torch inside the unittest
+            # process (which also hosts FastAPI test threads) segfaulted on
+            # macOS, and these tests exercise the salvage logic, not torch.
+            with patch.dict(sys.modules, {"doclayout_yolo": fake}), patch(
+                "pdf_layout_parser.torchcompat.trusted_checkpoint_loading",
+                contextlib.nullcontext,
+            ):
+                return run_doclayout_yolo_training(config)
+
+    def test_existing_checkpoint_is_salvaged_with_a_warning(self):
+        result = self._run_with_fake_trainer(write_best=True)
+        self.assertEqual(result.status, "completed")
+        self.assertTrue(result.best_model_path.endswith("best.pt"))
+        self.assertTrue(any("finalisation" in warning for warning in result.warnings))
+        self.assertIsNone(result.error)
+
+    def test_crash_without_a_checkpoint_still_fails(self):
+        result = self._run_with_fake_trainer(write_best=False)
+        self.assertEqual(result.status, "failed")
+        self.assertIn("Conv", result.error)
 
 
 class PageCountExperimentTests(unittest.TestCase):

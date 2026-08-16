@@ -79,7 +79,12 @@ class DocLayoutYoloDetector(LayoutDetector):
             raise RuntimeError(
                 "doclayout-yolo is not installed. Install with `pip install -e .[doclayout]`."
             ) from exc
-        self._model = YOLOv10(str(self.model_path))
+        from pdf_layout_parser.torchcompat import trusted_checkpoint_loading
+
+        # PyTorch >= 2.6 rejects doclayout_yolo's pickled checkpoints under the
+        # weights_only default; these are operator-supplied or self-trained files.
+        with trusted_checkpoint_loading():
+            self._model = YOLOv10(str(self.model_path))
         return self._model
 
     def detect(self, image_path: Path, page_number: int) -> list[DetectedRegion]:
