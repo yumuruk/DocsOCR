@@ -119,7 +119,11 @@ def export_yolo_dataset(
             label_path.write_text(
                 "\n".join(label_lines) + ("\n" if label_lines else ""), encoding="utf-8"
             )
-            written[split_name].append(target_image.relative_to(output_dir).as_posix())
+            # The "./" prefix is load-bearing: ultralytics only joins a listing
+            # line to the txt file's own directory when it starts with "./" --
+            # bare relative lines are resolved against the process CWD and the
+            # loader silently finds zero images.
+            written[split_name].append("./" + target_image.relative_to(output_dir).as_posix())
 
     for split_name in ("train", "val", "test"):
         if split_name == "test" and not written["test"]:
@@ -134,7 +138,10 @@ def export_yolo_dataset(
         warnings.append(f"Dropped {dropped_boxes} box(es) with zero area after clamping to the page")
 
     data_yaml = output_dir / "data.yaml"
-    data_yaml.write_text(build_data_yaml(has_test=bool(written["test"])), encoding="utf-8")
+    data_yaml.write_text(
+        build_data_yaml(dataset_dir=output_dir, has_test=bool(written["test"])),
+        encoding="utf-8",
+    )
 
     from pdf_layout_parser.evaluation.harness import dataset_fingerprint
 
@@ -226,7 +233,7 @@ def split_pages(pages: list, train_ratio: float = 0.8) -> tuple[list, list]:
     return train_pages, val_pages
 
 
-def build_data_yaml(has_test: bool = False) -> str:
+def build_data_yaml(dataset_dir: Path | str = ".", has_test: bool = False) -> str:
     """Emit the dataset descriptor with the canonical class list.
 
     ``nc`` and ``names`` are always the full catalogue regardless of which classes
@@ -235,11 +242,19 @@ def build_data_yaml(has_test: bool = False) -> str:
     not be evaluated against another. There is deliberately no ``labels``
     parameter: an earlier version accepted one and silently ignored it, which is
     worse than either honouring or refusing it.
+
+    ``path`` is written as an absolute path on purpose. Ultralytics resolves a
+    relative ``path`` against its global ``datasets_dir`` setting, not against
+    the yaml's own location -- with ``path: .`` training looked for the images
+    under whatever directory that machine's ultralytics settings pointed at and
+    failed with "images not found". The cost is that the yaml is machine-local;
+    re-export rather than copy a dataset between machines.
     """
+    resolved = Path(dataset_dir).resolve() if str(dataset_dir) != "." else Path(".")
     names = "\n".join(f"  {index}: {label}" for index, label in enumerate(CANONICAL_LABELS))
     test_line = "test: test.txt\n" if has_test else ""
     return (
-        "path: .\n"
+        f"path: {resolved.as_posix()}\n"
         "train: train.txt\n"
         "val: val.txt\n"
         f"{test_line}"

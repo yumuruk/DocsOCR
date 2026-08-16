@@ -496,6 +496,31 @@ class DatasetExportTests(unittest.TestCase):
         self.assertNotIn("test:", yaml_text)
         self.assertIn("test: test.txt", build_data_yaml(has_test=True))
 
+    def test_data_yaml_path_is_absolute(self):
+        """Ultralytics resolves a relative `path:` against its global datasets_dir
+        setting, not the yaml's location -- with `path: .` training looked for
+        images under that machine's datasets folder and found none."""
+        first_line = build_data_yaml(dataset_dir="relative/dir").splitlines()[0]
+        self.assertTrue(first_line.startswith("path: /"), first_line)
+
+    def test_listing_lines_carry_the_dot_slash_prefix(self):
+        """Ultralytics only joins a listing line to the txt file's own directory
+        when it starts with './'; bare relative lines resolve against the CWD and
+        the loader silently found zero images."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pages = self._annotation_pages(root, document_count=2, pages_per_document=2)
+            annotation_path = root / "annotations.json"
+            annotation_path.write_text(
+                '{"labels": ["body"], "pages": [%s]}'
+                % ",".join(page.model_dump_json() for page in pages),
+                encoding="utf-8",
+            )
+            export = export_yolo_dataset(annotation_path, root / "dataset")
+            lines = Path(export.train_txt).read_text(encoding="utf-8").split()
+        self.assertTrue(lines)
+        self.assertTrue(all(line.startswith("./") for line in lines), lines[:3])
+
     def test_export_with_explicit_splits_writes_a_test_split(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

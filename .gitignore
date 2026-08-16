@@ -16,3 +16,4 @@ runs/
 models/*.pt
 
 .DS_Store
+*.cache
