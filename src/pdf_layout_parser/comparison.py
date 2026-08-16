@@ -203,3 +203,53 @@ def run_training(config: TrainingConfig):
     from pdf_layout_parser.training import run_doclayout_yolo_training
 
     return run_doclayout_yolo_training(config)
+
+
+def main() -> int:
+    """Subprocess entry point: ``python -m pdf_layout_parser.comparison ...``.
+
+    The web backend runs the whole comparison in a child process rather than a
+    thread, because torch inference on a non-main thread can segfault on macOS
+    -- observed killing the entire server (exit 139) during the post-train
+    validation pass. In a subprocess a native crash is just a failed job.
+
+    Phases are reported by rewriting ``--phase-file``; the result is the
+    ``comparison.json`` the run already writes.
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run one fine-tune-and-compare job")
+    parser.add_argument("--annotations", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--pretrain", type=Path, default=None)
+    parser.add_argument("--epochs", type=int, default=20)
+    parser.add_argument("--image-size", type=int, default=1024)
+    parser.add_argument("--device", default="cpu")
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--test-ratio", type=float, default=0.35)
+    parser.add_argument("--val-ratio", type=float, default=0.15)
+    parser.add_argument("--phase-file", type=Path, default=None)
+    args = parser.parse_args()
+
+    def report(phase: str) -> None:
+        if args.phase_file:
+            args.phase_file.parent.mkdir(parents=True, exist_ok=True)
+            args.phase_file.write_text(phase, encoding="utf-8")
+
+    run_finetune_comparison(
+        annotation_path=args.annotations,
+        output_dir=args.output_dir,
+        pretrain=args.pretrain,
+        epochs=args.epochs,
+        image_size=args.image_size,
+        device=args.device,
+        seed=args.seed,
+        test_ratio=args.test_ratio,
+        val_ratio=args.val_ratio,
+        progress=report,
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

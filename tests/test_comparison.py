@@ -171,5 +171,94 @@ class FinetuneComparisonTests(unittest.TestCase):
         self.assertIn("boom", str(caught.exception))
 
 
+class WebTrainingEndpointTests(unittest.TestCase):
+    def _client(self):
+        from fastapi.testclient import TestClient
+
+        from backend.main import app
+
+        return TestClient(app)
+
+    def _payload(self, tmp: Path, complete_pages: int = 4, total_pages: int = 4):
+        pages = []
+        for index in range(total_pages):
+            image_path = tmp / f"page_{index}.png"
+            Image.new("RGB", (100, 200), "white").save(image_path)
+            pages.append(
+                {
+                    "image_path": str(image_path),
+                    "width": 100,
+                    "height": 200,
+                    "page_number": index + 1,
+                    "label_status": "complete" if index < complete_pages else "in_progress",
+                    "annotations": [
+                        {"label": "body", "bbox": {"x": 10, "y": 10, "width": 60, "height": 80}}
+                    ],
+                }
+            )
+        return {"annotations": {"labels": ["body"], "pages": pages}}
+
+    def test_rejects_fewer_than_three_labeled_pages(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            response = self._client().post(
+                "/training/fine-tune", json=self._payload(Path(tmp), complete_pages=2)
+            )
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("at least 3", response.json()["detail"])
+
+    def test_unknown_job_is_404(self):
+        response = self._client().get("/training/jobs/nope")
+        self.assertEqual(response.status_code, 404)
+
+    def test_job_lifecycle_with_patched_worker(self):
+        """Patches the subprocess seam: the endpoint's contract is job creation,
+        phase relay, result exposure, and on-disk persistence -- not training."""
+        import backend.main as main
+
+        def fake_worker(run_dir, annotation_path, request, pretrain, set_phase):
+            set_phase("training (fake)")
+            return {"best_model_path": str(main.PROJECT_ROOT / "runs" / "fake" / "best.pt")}
+
+        client = self._client()
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(main, "execute_comparison_job", fake_worker):
+                response = client.post("/training/fine-tune", json=self._payload(Path(tmp)))
+                self.assertEqual(response.status_code, 200, response.text)
+                job_id = response.json()["job_id"]
+
+                snapshot = None
+                for _ in range(50):
+                    snapshot = client.get(f"/training/jobs/{job_id}").json()
+                    if snapshot["status"] in {"completed", "failed"}:
+                        break
+                    time.sleep(0.1)
+
+        self.assertEqual(snapshot["status"], "completed", snapshot)
+        self.assertEqual(snapshot["result"]["best_model_relpath"], "runs/fake/best.pt")
+        # The job snapshot also survives on disk for post-restart inspection.
+        self.assertTrue((Path(snapshot["output_dir"]) / "job.json").exists())
+
+    def test_concurrent_job_is_refused(self):
+        import backend.main as main
+
+        def slow_worker(run_dir, annotation_path, request, pretrain, set_phase):
+            time.sleep(1.0)
+            return {"best_model_path": None}
+
+        client = self._client()
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(main, "execute_comparison_job", slow_worker):
+                first = client.post("/training/fine-tune", json=self._payload(Path(tmp)))
+                self.assertEqual(first.status_code, 200)
+                second = client.post("/training/fine-tune", json=self._payload(Path(tmp)))
+                self.assertEqual(second.status_code, 409)
+                # Let the first job settle so it does not leak into other tests.
+                job_id = first.json()["job_id"]
+                for _ in range(30):
+                    if client.get(f"/training/jobs/{job_id}").json()["status"] == "completed":
+                        break
+                    time.sleep(0.1)
+
+
 if __name__ == "__main__":
     unittest.main()
