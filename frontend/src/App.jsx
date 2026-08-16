@@ -86,6 +86,12 @@ export default function App() {
   const [elapsed, setElapsed] = useState(null);
   const [annotations, setAnnotations] = useState([]);
   const [hiddenLabels, setHiddenLabels] = useState(() => new Set());
+  // Whether the model's read-only plates are drawn on the page. Loading
+  // predictions turns this off: the plates get copied into editable
+  // annotations at identical coordinates, and leaving the originals visible
+  // makes every box appear twice -- moving the editable copy then looks like
+  // "the prediction didn't move and a duplicate appeared".
+  const [showPlates, setShowPlates] = useState(true);
   // One pointer gesture at a time: drawing a new box, moving a box, or resizing
   // by a corner handle. Selection is separate state so a box stays selected
   // (relabel, keyboard delete) after the gesture ends.
@@ -136,6 +142,7 @@ export default function App() {
     setSelectedId(null);
     setDonePages(new Set());
     setAnnotationNote("");
+    setShowPlates(true);
     setFinetune(null);
     setElapsed(null);
     setError("");
@@ -174,6 +181,7 @@ export default function App() {
       setSelectedId(null);
       setDonePages(new Set());
       setAnnotationNote("");
+      setShowPlates(true);
       setFinetune(null);
       setElapsed((performance.now() - startedAt) / 1000);
       setStatus({ label: "Done", tone: "done" });
@@ -366,7 +374,11 @@ export default function App() {
     // output and fix it", not "mix it into what I already drew".
     setAnnotations(loaded);
     setSelectedId(null);
-    setAnnotationNote(`Loaded ${loaded.length} prediction(s) — edits become corrections`);
+    // Hide the read-only plates: they are now duplicated as editable boxes.
+    setShowPlates(false);
+    setAnnotationNote(
+      `Loaded ${loaded.length} prediction(s) as editable boxes — click to select, drag to move, corners resize`
+    );
   }
 
   async function importAnnotations(file) {
@@ -585,7 +597,7 @@ export default function App() {
           <Panel title="Annotate">
             <div className="grid gap-3">
               <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-2">
-                <Field label="Label">
+                <Field label="New-box label">
                   <select
                     className="input"
                     value={selectedLabel}
@@ -600,6 +612,14 @@ export default function App() {
                 </Field>
                 <Toggle checked={drawMode} label="Draw" onChange={setDrawMode} />
               </div>
+
+              {result ? (
+                <Toggle
+                  checked={showPlates}
+                  label="Show read-only model plates"
+                  onChange={setShowPlates}
+                />
+              ) : null}
 
               {annotations.length > 0 ? (
                 <ul className="grid max-h-52 gap-px overflow-auto rounded-md border border-line bg-line">
@@ -711,7 +731,11 @@ export default function App() {
                 <p className="font-mono text-[10px] leading-4 text-faint">{annotationNote}</p>
               ) : (
                 <p className="font-mono text-[10px] leading-4 text-faint">
-                  Click a box to select · drag to move · corners resize · Del removes
+                  1&#41; Predictions loads the model output as editable boxes ·
+                  2&#41; click a box to select, drag inside to move, corners to resize,
+                  the row&apos;s dropdown to relabel, Del to remove ·
+                  3&#41; drag on empty space to add a new box with the label above ·
+                  4&#41; mark each page Labeled, then Export
                 </p>
               )}
             </div>
@@ -863,6 +887,7 @@ export default function App() {
                   onToggleDone={togglePageDone}
                   page={page}
                   selectedId={selectedId}
+                  showPlates={showPlates}
                   zoom={zoom}
                 />
               ))}
@@ -991,6 +1016,7 @@ function PageProof({
   onToggleDone,
   page,
   selectedId,
+  showPlates,
   zoom,
 }) {
   const regions = page.regions.filter((region) => !hiddenLabels.has(region.label));
@@ -1042,14 +1068,16 @@ function PageProof({
               onPointerMove={onPointerMove}
               onPointerUp={(event) => onPointerUp(event, page)}
             >
-              {regions.map((region) => (
-                <RegionBox
-                  key={region.region_id}
-                  bbox={region.bbox}
-                  confidence={region.confidence}
-                  label={region.label}
-                />
-              ))}
+              {showPlates
+                ? regions.map((region) => (
+                    <RegionBox
+                      key={region.region_id}
+                      bbox={region.bbox}
+                      confidence={region.confidence}
+                      label={region.label}
+                    />
+                  ))
+                : null}
               {pageAnnotations.map((annotation) => (
                 <RegionBox
                   bbox={annotation.bbox}
