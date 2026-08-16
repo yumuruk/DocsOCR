@@ -364,6 +364,35 @@ class TrainingResult(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class FinetuneVariantSummary(BaseModel):
+    """One row of the web before/after table: the numbers a person compares."""
+
+    variant: str
+    detector: str
+    model_path: str | None = None
+    label_mapping: str = "identity"
+    pages: int = 0
+    map50: float | None = None
+    map5095: float | None = None
+    reduction_rate: float | None = None
+    loss_rate: float | None = None
+    contamination_rate: float | None = None
+
+
+class FinetuneComparison(BaseModel):
+    """Result of one fine-tune-and-compare run (web quick loop)."""
+
+    output_dir: str
+    split: SplitSummary
+    split_warnings: list[str] = Field(default_factory=list)
+    dataset: YoloExportResult
+    training: TrainingResult
+    best_model_path: str | None = None
+    baseline: EvaluationReport
+    tuned: EvaluationReport
+    summary: list[FinetuneVariantSummary] = Field(default_factory=list)
+
+
 class ExperimentResult(BaseModel):
     sample_size: int
     dataset: YoloExportResult
