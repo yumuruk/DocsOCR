@@ -3,6 +3,7 @@ import {
   Download,
   Eraser,
   FileText,
+  FlaskConical,
   Loader2,
   Play,
   ScanLine,
@@ -91,6 +92,10 @@ export default function App() {
   const [donePages, setDonePages] = useState(() => new Set());
   const [annotationNote, setAnnotationNote] = useState("");
   const [error, setError] = useState("");
+  // Web quick-loop training: one job at a time, polled until it settles.
+  const [finetune, setFinetune] = useState(null);
+  const [epochs, setEpochs] = useState("20");
+  const [trainImageSize, setTrainImageSize] = useState("1024");
   const nextAnnotationId = useRef(1);
   const importInputRef = useRef(null);
   const isParsing = status.tone === "busy";
@@ -127,6 +132,7 @@ export default function App() {
     setSelectedId(null);
     setDonePages(new Set());
     setAnnotationNote("");
+    setFinetune(null);
     setElapsed(null);
     setError("");
   }
@@ -164,6 +170,7 @@ export default function App() {
       setSelectedId(null);
       setDonePages(new Set());
       setAnnotationNote("");
+      setFinetune(null);
       setElapsed((performance.now() - startedAt) / 1000);
       setStatus({ label: "Done", tone: "done" });
     } catch (caught) {
@@ -408,6 +415,61 @@ export default function App() {
     downloadJson("annotations.json", annotationPayload);
   }
 
+  const isTraining = finetune?.status === "queued" || finetune?.status === "running";
+
+  async function startFinetune() {
+    if (!annotationPayload || isTraining) return;
+    setFinetune({ status: "queued", phase: "submitting" });
+    try {
+      const response = await fetch("/training/fine-tune", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          annotations: annotationPayload,
+          epochs: Number(epochs) || 20,
+          image_size: Number(trainImageSize) || 1024,
+          device,
+          // The current model path doubles as the fine-tune starting point; the
+          // server falls back to the bundled DocStructBench checkpoint.
+          pretrain: usesModel && modelPath.trim() ? modelPath.trim() : null,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Fine-tune request failed");
+      setFinetune({ jobId: data.job_id, status: "queued", phase: "queued", startedAt: performance.now() });
+    } catch (caught) {
+      setFinetune({ status: "failed", error: readableError(caught) });
+    }
+  }
+
+  // Poll the job until it settles. The interval restarts whenever the job id or
+  // its status changes and tears down on unmount.
+  useEffect(() => {
+    if (!finetune?.jobId || (finetune.status !== "queued" && finetune.status !== "running")) return;
+    const timer = setInterval(async () => {
+      try {
+        const response = await fetch(`/training/jobs/${finetune.jobId}`);
+        if (!response.ok) return;
+        const snapshot = await response.json();
+        setFinetune((current) =>
+          current && current.jobId === snapshot.job_id
+            ? { ...current, status: snapshot.status, phase: snapshot.phase, result: snapshot.result, error: snapshot.error }
+            : current
+        );
+      } catch {
+        // transient network error: keep polling
+      }
+    }, 2500);
+    return () => clearInterval(timer);
+  }, [finetune?.jobId, finetune?.status]);
+
+  function useTunedModel() {
+    const path = finetune?.result?.best_model_relpath || finetune?.result?.best_model_path;
+    if (!path) return;
+    setDetector("doclayout-yolo");
+    setModelPath(path);
+  }
+
   // Keyboard editing: Escape deselects, Delete removes the selected box.
   // Ignored while typing in a form control.
   useEffect(() => {
@@ -650,6 +712,70 @@ export default function App() {
             </div>
           </Panel>
 
+          <Panel title="Fine-tune">
+            <div className="grid gap-3">
+              <div className="grid grid-cols-2 gap-2">
+                <Field label="Epochs">
+                  <input
+                    className="input tabular-nums"
+                    min="1"
+                    max="300"
+                    type="number"
+                    value={epochs}
+                    disabled={isTraining}
+                    onChange={(event) => setEpochs(event.target.value)}
+                  />
+                </Field>
+                <Field label="Train img size">
+                  <select
+                    className="input"
+                    value={trainImageSize}
+                    disabled={isTraining}
+                    onChange={(event) => setTrainImageSize(event.target.value)}
+                  >
+                    <option value="640">640 (fast)</option>
+                    <option value="1024">1024</option>
+                  </select>
+                </Field>
+              </div>
+
+              <button
+                className="primary-button"
+                type="button"
+                onClick={startFinetune}
+                disabled={!result || donePages.size < 3 || annotations.length === 0 || isTraining}
+                title={
+                  donePages.size < 3
+                    ? "Mark at least 3 pages as Labeled first — they are split into train/val/test"
+                    : "Train on the Labeled pages, then score before vs after on held-out pages"
+                }
+              >
+                {isTraining ? <Loader2 className="h-4 w-4 animate-spin" /> : <FlaskConical className="h-4 w-4" />}
+                {isTraining ? `Training — ${finetune.phase}` : "Fine-tune & compare"}
+              </button>
+
+              {donePages.size < 3 && result ? (
+                <p className="font-mono text-[10px] leading-4 text-faint">
+                  {donePages.size}/3 pages marked Labeled — the job splits them into train/val/test,
+                  trains on train, and scores both models on the held-out test pages.
+                </p>
+              ) : null}
+
+              {finetune?.status === "failed" ? (
+                <div className="rounded-md border border-danger bg-danger-bg px-2.5 py-2">
+                  <p className="eyebrow text-danger">Fine-tune failed</p>
+                  <p className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words font-mono text-[10px] leading-4 text-danger">
+                    {finetune.error || "Unknown error"}
+                  </p>
+                </div>
+              ) : null}
+
+              {finetune?.status === "completed" && finetune.result ? (
+                <FinetuneOutcome result={finetune.result} onUseTuned={useTunedModel} />
+              ) : null}
+            </div>
+          </Panel>
+
           <Panel title="View">
             <div className="grid grid-cols-3 gap-1 rounded-md border border-line bg-raised p-1">
               {ZOOM_OPTIONS.map((option) => (
@@ -779,6 +905,63 @@ function SummaryStrip({ elapsed, hiddenLabels, onToggleLabel, summary }) {
           })}
         </div>
       </div>
+    </div>
+  );
+}
+
+function FinetuneOutcome({ onUseTuned, result }) {
+  const pct = (value) => (value === null || value === undefined ? "—" : `${(value * 100).toFixed(1)}%`);
+  const score = (value) => (value === null || value === undefined ? "—" : value.toFixed(3));
+  const rows = result.summary || [];
+  const testPages = result.split?.test_pages;
+  const baseline = rows.find((row) => row.variant === "baseline");
+  const tuned = rows.find((row) => row.variant === "tuned");
+  const delta =
+    baseline?.map50 != null && tuned?.map50 != null ? tuned.map50 - baseline.map50 : null;
+
+  return (
+    <div className="grid gap-2">
+      <p className="eyebrow">
+        Before vs after · {testPages ?? "?"} held-out page{testPages === 1 ? "" : "s"}
+      </p>
+      <div className="overflow-x-auto rounded-md border border-line">
+        <table className="w-full font-mono text-[11px]">
+          <thead>
+            <tr className="border-b border-line bg-raised text-left text-faint">
+              <th className="px-2 py-1.5 font-medium">model</th>
+              <th className="px-2 py-1.5 font-medium">mAP@.5</th>
+              <th className="px-2 py-1.5 font-medium" title="OCR area saved vs full-page">save</th>
+              <th className="px-2 py-1.5 font-medium" title="ground-truth content discarded">loss</th>
+              <th className="px-2 py-1.5 font-medium" title="extracted area that is not content">noise</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr className="border-b border-line last:border-b-0" key={row.variant}>
+                <td className="px-2 py-1.5">{row.variant}</td>
+                <td className="px-2 py-1.5 tabular-nums">{score(row.map50)}</td>
+                <td className="px-2 py-1.5 tabular-nums">{pct(row.reduction_rate)}</td>
+                <td className="px-2 py-1.5 tabular-nums">{pct(row.loss_rate)}</td>
+                <td className="px-2 py-1.5 tabular-nums">{pct(row.contamination_rate)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {delta !== null ? (
+        <p className="font-mono text-[11px] text-muted">
+          mAP@.5 {delta >= 0 ? "+" : ""}
+          {delta.toFixed(3)} after fine-tuning
+        </p>
+      ) : null}
+      <button className="secondary-button" type="button" onClick={onUseTuned}>
+        <Play className="h-3.5 w-3.5" />
+        Use tuned model
+      </button>
+      <p className="font-mono text-[10px] leading-4 text-faint">
+        Held-out pages come from the same document (page-level split); numbers are not comparable
+        with document-level CLI experiments. Set Model path &amp; Run parse again to see the tuned boxes.
+      </p>
     </div>
   );
 }
