@@ -373,12 +373,30 @@ uv run pdf-layout-parser compare ./runs/eval --output docs/comparison.md
 주의: 평가용 예측은 conf **0.001**로 생성하고(PR 곡선 recall 꼬리 보존), 운영 지표와 혼동행렬만
 작동점 **0.25**를 씁니다. 이 둘을 같은 값으로 두면 AP가 체계적으로 과소평가됩니다.
 
+## 웹에서 fine-tuning (quick loop)
+
+어노테이션 → 학습 → 전/후 비교를 웹에서 한 번에 돌릴 수 있습니다.
+
+1. 파싱 후 박스를 그리거나 `Predictions`로 모델 출력을 불러와 수정
+2. 페이지마다 **Labeled** 체크 (최소 3페이지 — train/val/test로 분할됨)
+3. `Fine-tune & compare` 클릭 → 백그라운드 잡이 학습 후 **같은 held-out 페이지에서**
+   baseline(사전학습 zero-shot)과 tuned 모델을 채점
+4. 전/후 테이블(mAP@.5 / save / loss / noise) 확인 → `Use tuned model`로 경로 주입 →
+   `Run parse`로 tuned 박스 확인
+
+주의: 웹 경로는 문서 1개 기준 page-level 분할이라 같은 문서의 안 본 페이지에 대한
+숫자입니다. 문서 단위로 분할하는 CLI 실험(`experiment`/`evaluate`)과 수치를 비교하지
+마세요. 학습은 서버와 분리된 서브프로세스에서 돌고, 결과는
+`runs/web-training/<job>/comparison.json`에 남습니다.
+
 ## API 엔드포인트
 
 - `GET /health`
 - `POST /documents/parse`
 - `POST /annotations/export-yolo`
-- `POST /training/fine-tune`
+- `POST /training/fine-tune` — JSON body(어노테이션 payload + epochs/device/seed),
+  즉시 `job_id` 반환
+- `GET /training/jobs/{job_id}` — 잡 상태/단계/결과 폴링
 
 FastAPI Swagger 문서:
 
