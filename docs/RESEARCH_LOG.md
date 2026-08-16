@@ -182,3 +182,42 @@ salvage 경로를 넣었다. 우리 하네스가 진짜 채점을 하므로 트�
 2 epochs 실학습(DocStructBench 사전학습) → 전/후 테이블 렌더 → Use tuned model로
 경로 주입까지 완주. tuned 체크포인트가 정본 8라벨로 추론됨을 확인. 117 tests OK.
 스모크 수치(mAP 0/0)는 2 epochs×2페이지 합성 데이터의 예상 결과이며 배관 검증이 목적.
+
+## 2026-08-16 — 방향 전환: 목표는 필드 추출이 아니라 RAG 코퍼스 정제
+
+사용자와의 논의에서 실제 목표가 확정됐다: **다양한 장르의 문서(영수증·양식·논문·
+매뉴얼·회의록·데이터시트)에서 내용(title/body/table)만 vector DB에 넣고 잡동사니
+(header/footer/figure/ignore)를 걸러내는 범용 분리기**. 스펙 Scenario 4의 필드 추출
+프레임(target_data = 부품번호 등)은 이번 라운드가 아니다.
+
+**설계 귀결:**
+- 기존 8라벨 카탈로그 그대로 사용, target_data는 이번 라운드 미사용 (카탈로그 유지)
+- 헤드라인 지표는 유실률·오염률 (operational.py가 이미 측정)
+- 범용이 목표이므로 실험 순서가 뒤집힘: **Phase A = zero-shot이 장르 전반에서
+  충분한지 학습 없이 먼저 실측** → 무너지는 장르에만 Phase B(fine-tuning). 단일
+  문서군(TI)으로만 학습하면 오히려 범용성을 해칠 수 있다는 점이 근거.
+
+**Phase A 구성 (docs-over-pages 수정안 채택):**
+- 장르당 문서 2개로는 "장르가 어렵다"와 "이 문서가 유별나다"를 식별 불가 → 같은
+  예산에서 6장르 × 5문서 × 2~3페이지. 코퍼스 재조사로 실제 보유량 확인:
+  receipt 40 · ti-datasheet 46 · form 30 · minutes 24 · patent 15 · paper 12 · manual 9 · rfc 6
+- 선정: receipt(10문서×1p — 1페이지 문서라 docs-over-pages에 최적) / ti-datasheet /
+  form(취약 후보) / paper(zero-shot 상한 기준선) / minutes / manual = **35문서 70페이지**
+- 제외: patent(paper와 중복 성격), rfc(6개뿐). scanned는 장르가 아니라 축 — 별도 관찰.
+  **korean은 비어 있음 — 실사용 대상이면 수집 필요, Phase B로 이월**
+- **지표 읽기 규칙**: 유실·오염·절감률은 장르별로 읽고, per-class AP(특히 table)는
+  장르당 인스턴스 ~14개뿐이라 **전 장르 합산으로만** 읽는다.
+
+**라벨링 마찰 제거 (도구):**
+- `scripts/prepare_phase_a.py` — 장르당 통합 PDF 1개(업로드 30회→6회) + 페이지→문서
+  manifest. 층화 추출: 첫 페이지 + find_tables 기반 표 밀도 상위 페이지 (table이
+  희소 관건 클래스이므로 균등 추출은 과소표집).
+- Predictions 프리로드가 원시 DocStructBench 라벨을 정본 라벨로 자동 매핑하도록 UI
+  수정. `abandon`은 위치 휴리스틱으로 header/footer/ignore 분해 — 평가 매핑(→ignore)과
+  의도적으로 다름: 여기선 사람이 전수 검수하므로 틀린 추측 비용이 클릭 1회.
+- `scripts/merge_phase_a_exports.py` — export 6개에 manifest로 document_id 재주입,
+  장르별 평가 파일 생성. 합성 export로 하네스 로드·문서 단위 분할까지 검증 완료.
+
+**다음**: 사용자가 6개 번들(runs/demo/phase-a/*.pdf) 라벨링 → 병합 → 장르별
+`evaluate --label-mapping docstructbench --tag genre=X` → 원장에 Phase A 결과.
+유실률 상한(예: 2%)을 못 넘는 장르 = Phase B 대상.
